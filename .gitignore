@@ -8,4 +8,4 @@ output/
 
 __pycache__
 .env
-vietnamese_embedding
+vietnamese_embedding/
