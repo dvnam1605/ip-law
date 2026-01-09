@@ -70,10 +70,10 @@ conda activate shtt
 python -m api.main
 
 # Hoặc với uvicorn trực tiếp
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn api.main:app --host 0.0.0.0 --port 1605 --reload
 ```
 
-API Documentation: http://localhost:8000/docs
+API Documentation: http://localhost:1605/docs
 
 ### API Endpoints
 
@@ -88,7 +88,7 @@ API Documentation: http://localhost:8000/docs
 
 ```bash
 # POST request
-curl -X POST "http://localhost:8000/api/query" \
+curl -X POST "http://localhost:1605/api/query" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "Điều kiện đăng ký nhãn hiệu ở Việt Nam?",
@@ -96,7 +96,7 @@ curl -X POST "http://localhost:8000/api/query" \
   }'
 
 # GET request
-curl "http://localhost:8000/api/query?q=Điều%20kiện%20bảo%20hộ%20quyền%20tác%20giả&top_k=5"
+curl "http://localhost:1605/api/query?q=Điều%20kiện%20bảo%20hộ%20quyền%20tác%20giả&top_k=5"
 ```
 
 ### Response Format
