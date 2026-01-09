@@ -1,0 +1,11 @@
+*.pdf
+*.docx
+*.txt
+*.pyc
+*.pyo
+*.pyd
+*.json
+
+__pycache__
+.env
+vietnamese_embedding
