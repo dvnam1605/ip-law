@@ -1,0 +1,13 @@
+pymupdf
+langchain_text_splitters
+qdrant-client
+sentence-transformers
+# torch>=2.0.0
+google-generativeai>=0.8.0
+python-dotenv
+neo4j
+
+# FastAPI
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0

@@ -1,6 +1,6 @@
 *.pdf
 *.docx
-*.txt
+output/
 *.pyc
 *.pyo
 *.pyd
