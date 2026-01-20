@@ -17,7 +17,6 @@ except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
 
 
-# ============ DATA CLASSES ============
 @dataclass
 class RetrievedChunk:
     """Kết quả retrieval"""
@@ -35,7 +34,6 @@ class RetrievedChunk:
     context_after: Optional[str] = None
 
 
-# ============ RETRIEVER ============
 class Neo4jLegalRetriever:
     """
     Legal RAG Retriever sử dụng Neo4j

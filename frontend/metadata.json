@@ -1,0 +1,5 @@
+{
+  "name": "Custom AI Chatbot",
+  "description": "A modern, responsive chat interface connected to a local FastAPI backend on port 1605.",
+  "requestFramePermissions": []
+}

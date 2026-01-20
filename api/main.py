@@ -183,6 +183,47 @@ async def query_legal_get(
     return await query_legal(request)
 
 
+@app.post("/api/query/stream")
+async def query_legal_stream(request: QueryRequest):
+    """
+    Truy vấn pháp luật với streaming response (Server-Sent Events)
+    
+    Response sẽ được trả về từng phần để hiển thị real-time.
+    """
+    from fastapi.responses import StreamingResponse
+    
+    async def generate():
+        try:
+            pipeline = get_pipeline()
+            
+            # Stream từng chunk từ Gemini
+            for chunk in pipeline.query_stream(
+                query=request.query,
+                top_k=request.top_k,
+                query_date=request.query_date,
+                doc_types=request.doc_types
+            ):
+                # Escape newlines để không phá vỡ SSE format
+                escaped = chunk.replace('\\', '\\\\').replace('\n', '\\n')
+                yield f"data: {escaped}\n\n"
+            
+            # Signal end of stream
+            yield "data: [DONE]\n\n"
+            
+        except Exception as e:
+            yield f"data: [ERROR]{str(e)}\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
 # ============ RUN SERVER ============
 if __name__ == "__main__":
     import uvicorn

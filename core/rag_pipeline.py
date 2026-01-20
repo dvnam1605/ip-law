@@ -5,26 +5,22 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Get project root directory
 PROJECT_ROOT = Path(__file__).parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 import google.generativeai as genai
 
-# Add parent to path for imports
 import sys
 sys.path.insert(0, str(PROJECT_ROOT))
 from utils.neo4j_retriever import Neo4jLegalRetriever, RetrievedChunk
 
 
-# ============ CONFIGURATION ============
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 EMBEDDING_MODEL_PATH = str(PROJECT_ROOT / "vietnamese_embedding")
 TOP_K_RETRIEVAL = int(os.getenv("TOP_K_RETRIEVAL", "5"))
 
 
-# ============ DATA CLASSES ============
 @dataclass
 class RAGResponse:
     """Response từ RAG pipeline"""
@@ -34,7 +30,6 @@ class RAGResponse:
     retrieved_chunks: int
     
 
-# ============ PROMPTS ============
 SYSTEM_PROMPT = """Bạn là chuyên gia tư vấn pháp luật Việt Nam. Trả lời NGẮN GỌN, TỰ NHIÊN như đang nói chuyện với người bình thường.
 
 ## CÁCH TRẢ LỜI:
@@ -73,7 +68,6 @@ Trả lời tự nhiên, mượt mà như đang giải thích cho người bình
 """
 
 
-# ============ RAG PIPELINE CLASS ============
 class GeminiRAGPipeline:
     """
     RAG Pipeline với Neo4j Retriever và Gemini API
@@ -197,6 +191,41 @@ class GeminiRAGPipeline:
             query=query,
             retrieved_chunks=len(results)
         )
+    
+    def query_stream(
+        self,
+        query: str,
+        top_k: int = None,
+        query_date: str = None,
+        doc_types: List[str] = None,
+    ):
+        """Execute RAG query with streaming response - yields text chunks"""
+        from typing import Generator
+        
+        k = top_k or self.top_k
+        
+        results = self.retriever.search(
+            query=query,
+            top_k=k,
+            query_date=query_date,
+            doc_types=doc_types,
+            expand_context=True,
+            context_window=1
+        )
+        
+        if not results:
+            yield "Xin lỗi, tôi không tìm thấy văn bản pháp luật nào liên quan đến câu hỏi của bạn."
+            return
+        
+        context = self._format_context(results)
+        user_prompt = USER_PROMPT_TEMPLATE.format(query=query, context=context)
+        
+        # Use streaming generation
+        response = self.model.generate_content(user_prompt, stream=True)
+        
+        for chunk in response:
+            if chunk.text:
+                yield chunk.text
     
     def close(self):
         """Close connections"""
