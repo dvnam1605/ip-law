@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { Message } from '../types';
-import { User, Bot, AlertCircle, Copy } from 'lucide-react';
+import { User, Bot, AlertCircle, Copy, BookOpen, Scale, Layers } from 'lucide-react';
 
 interface MessageBubbleProps {
   message: Message;
@@ -153,9 +153,16 @@ const MarkdownContent: React.FC<{ content: string }> = ({ content }) => {
   );
 };
 
+const routeLabels: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+  legal: { label: 'Văn bản pháp luật', icon: <BookOpen className="w-3 h-3" />, color: 'bg-blue-50 text-blue-600 border-blue-100' },
+  verdict: { label: 'Bản án', icon: <Scale className="w-3 h-3" />, color: 'bg-amber-50 text-amber-600 border-amber-100' },
+  combined: { label: 'Tổng hợp', icon: <Layers className="w-3 h-3" />, color: 'bg-purple-50 text-purple-600 border-purple-100' },
+};
+
 const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const isUser = message.role === 'user';
   const isError = message.isError;
+  const route = message.routeType ? routeLabels[message.routeType] : null;
 
   return (
     <div className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'} mb-8 group animate-in fade-in slide-in-from-bottom-2 duration-300`}>
@@ -186,6 +193,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             <div className="whitespace-pre-wrap text-sm md:text-base leading-relaxed font-medium">{message.content}</div>
           ) : (
             <div className="text-sm md:text-base leading-7 font-light text-gray-800">
+              {route && (
+                <div className="mb-2">
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${route.color}`}>
+                    {route.icon}
+                    {route.label}
+                  </span>
+                </div>
+              )}
               {isError ? message.content : <MarkdownContent content={message.content} />}
             </div>
           )}

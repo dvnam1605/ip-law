@@ -10,7 +10,9 @@ import {
   Trash2, 
   Share2,
   Check,
-  X
+  X,
+  Scale,
+  BookOpen
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -153,7 +155,11 @@ const Sidebar: React.FC<SidebarProps> = ({
                         onClick={() => onSelectSession(session.id)}
                         className="flex items-center gap-3 px-3 py-3 w-full text-left overflow-hidden"
                     >
-                        <MessageSquare className={`w-4 h-4 flex-shrink-0 ${currentSessionId === session.id ? 'text-white' : 'text-gray-600 group-hover:text-gray-400'}`} />
+                        {session.mode === 'verdict' ? (
+                          <Scale className={`w-4 h-4 flex-shrink-0 ${currentSessionId === session.id ? 'text-amber-400' : 'text-gray-600 group-hover:text-gray-400'}`} />
+                        ) : (
+                          <BookOpen className={`w-4 h-4 flex-shrink-0 ${currentSessionId === session.id ? 'text-blue-400' : 'text-gray-600 group-hover:text-gray-400'}`} />
+                        )}
                         <span className={`truncate flex-1 text-sm ${currentSessionId === session.id ? 'text-white font-medium' : 'text-gray-400 group-hover:text-gray-200'}`}>
                             {session.title}
                         </span>

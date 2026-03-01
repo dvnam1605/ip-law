@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Message, ChatSession, User } from './types';
+import { Message, ChatSession, User, ChatMode } from './types';
 import { sendQueryToBackendStream } from './services/apiService';
 import MessageBubble from './components/MessageBubble';
 import InputArea from './components/InputArea';
 import TypingIndicator from './components/TypingIndicator';
 import Sidebar from './components/Sidebar';
 import LoginPage from './components/LoginPage';
+import ModeSelector from './components/ModeSelector';
 import { Bot, Menu, PanelLeftOpen } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -14,6 +15,7 @@ const App: React.FC = () => {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [chatMode, setChatMode] = useState<ChatMode>('smart');
 
   // Sidebar State
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -46,17 +48,24 @@ const App: React.FC = () => {
     setCurrentSessionId(null);
   };
 
-  const createNewSession = () => {
+  const createNewSession = (overrideMode?: ChatMode) => {
+    const mode = overrideMode || chatMode;
+    const welcomeMessages: Record<ChatMode, string> = {
+      smart: 'Xin chào! Hãy hỏi bất kỳ câu hỏi nào về Sở hữu trí tuệ — tôi sẽ tự động tìm nguồn phù hợp nhất (luật, bản án, hoặc cả hai).',
+      verdict: 'Xin chào! Tôi có thể phân tích tình huống pháp lý dựa trên các bản án thực tế về Sở hữu trí tuệ. Hãy mô tả tình huống của bạn!',
+      legal: 'Xin chào! Tôi có thể giúp gì cho bạn về các quy định pháp luật?',
+    };
     const newSession: ChatSession = {
       id: Date.now().toString(),
       title: 'Đoạn chat mới',
       messages: [{
         id: 'welcome',
         role: 'assistant',
-        content: 'Xin chào! Tôi có thể giúp gì cho bạn?',
+        content: welcomeMessages[mode],
         timestamp: new Date()
       }],
-      createdAt: new Date()
+      createdAt: new Date(),
+      mode: mode
     };
     setSessions(prev => [...prev, newSession]);
     setCurrentSessionId(newSession.id);
@@ -65,6 +74,11 @@ const App: React.FC = () => {
 
   const handleSelectSession = (id: string) => {
     setCurrentSessionId(id);
+    // Switch mode to match the selected session's mode
+    const session = sessions.find(s => s.id === id);
+    if (session?.mode) {
+      setChatMode(session.mode);
+    }
     setIsMobileSidebarOpen(false);
   };
 
@@ -80,20 +94,8 @@ const App: React.FC = () => {
     const updatedSessions = sessions.filter(s => s.id !== id);
 
     if (updatedSessions.length === 0) {
-      // If all sessions are deleted, create a new one immediately
-      const newSession: ChatSession = {
-        id: Date.now().toString(),
-        title: 'Đoạn chat mới',
-        messages: [{
-          id: 'welcome',
-          role: 'assistant',
-          content: 'Xin chào! Tôi có thể giúp gì cho bạn?',
-          timestamp: new Date()
-        }],
-        createdAt: new Date()
-      };
-      setSessions([newSession]);
-      setCurrentSessionId(newSession.id);
+      createNewSession();
+      return;
     } else {
       setSessions(updatedSessions);
       // If the deleted session was active, switch to another one
@@ -143,6 +145,21 @@ const App: React.FC = () => {
     }));
   };
 
+  // Update a specific message's routeType (for smart router)
+  const updateMessageRouteType = (messageId: string, routeType: string) => {
+    setSessions(prevSessions => prevSessions.map(session => {
+      if (session.id === currentSessionId) {
+        return {
+          ...session,
+          messages: session.messages.map(msg =>
+            msg.id === messageId ? { ...msg, routeType } : msg
+          )
+        };
+      }
+      return session;
+    }));
+  };
+
   const handleSendMessage = async (text: string) => {
     if (!currentSessionId) return;
 
@@ -167,6 +184,7 @@ const App: React.FC = () => {
     updateCurrentSessionMessages(botMessage);
 
     try {
+      const sessionMode = currentSession?.mode || chatMode;
       await sendQueryToBackendStream(
         text,
         // onChunk: update message content as chunks arrive
@@ -182,6 +200,11 @@ const App: React.FC = () => {
           updateMessageContent(botMessageId, 'Xin lỗi, tôi không thể kết nối đến máy chủ (Port 1605).');
           console.error('Stream error:', error);
           setIsLoading(false);
+        },
+        sessionMode,
+        // onRoute: smart router tells us which source was used
+        (route) => {
+          updateMessageRouteType(botMessageId, route);
         }
       );
     } catch (error) {
@@ -259,9 +282,33 @@ const App: React.FC = () => {
               {currentSession?.title}
             </div>
           </div>
-          <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 rounded-full border border-gray-100">
-            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-            <span className="text-xs font-medium text-gray-500">Online</span>
+          <div className="flex items-center gap-4">
+            <ModeSelector mode={chatMode} onModeChange={(mode) => {
+              setChatMode(mode);
+              // If current session is still empty (only welcome msg), reuse it
+              const isCurrentEmpty = currentSession &&
+                currentSession.title === 'Đoạn chat mới' &&
+                currentSession.messages.length === 1 &&
+                currentSession.messages[0].id === 'welcome';
+              if (isCurrentEmpty && currentSession) {
+                const welcomeMessages: Record<ChatMode, string> = {
+                  smart: 'Xin chào! Hãy hỏi bất kỳ câu hỏi nào về Sở hữu trí tuệ — tôi sẽ tự động tìm nguồn phù hợp nhất (luật, bản án, hoặc cả hai).',
+                  verdict: 'Xin chào! Tôi có thể phân tích tình huống pháp lý dựa trên các bản án thực tế về Sở hữu trí tuệ. Hãy mô tả tình huống của bạn!',
+                  legal: 'Xin chào! Tôi có thể giúp gì cho bạn về các quy định pháp luật?',
+                };
+                setSessions(prev => prev.map(s =>
+                  s.id === currentSession.id
+                    ? { ...s, mode, messages: [{ ...s.messages[0], content: welcomeMessages[mode] }] }
+                    : s
+                ));
+              } else {
+                createNewSession(mode);
+              }
+            }} />
+            <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 rounded-full border border-gray-100">
+              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+              <span className="text-xs font-medium text-gray-500">Online</span>
+            </div>
           </div>
         </div>
 
@@ -273,7 +320,13 @@ const App: React.FC = () => {
                 <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mb-6">
                   <Bot className="w-8 h-8 text-gray-400" />
                 </div>
-                <p className="font-light text-lg text-gray-400">Tôi có thể giúp gì cho bạn hôm nay?</p>
+                <p className="font-light text-lg text-gray-400">
+                  {chatMode === 'smart'
+                    ? 'Hỏi bất kỳ câu hỏi nào — tôi sẽ tự động tìm nguồn phù hợp'
+                    : chatMode === 'verdict'
+                      ? 'Hãy mô tả tình huống pháp lý để tôi phân tích dựa trên bản án'
+                      : 'Tôi có thể giúp gì cho bạn hôm nay?'}
+                </p>
               </div>
             ) : (
               <>

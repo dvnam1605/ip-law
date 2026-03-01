@@ -23,7 +23,6 @@ TOP_K_RETRIEVAL = int(os.getenv("TOP_K_RETRIEVAL", "5"))
 
 @dataclass
 class RAGResponse:
-    """Response từ RAG pipeline"""
     answer: str
     sources: List[Dict[str, Any]]
     query: str
@@ -69,14 +68,9 @@ Trả lời tự nhiên, mượt mà như đang giải thích cho người bình
 
 
 class GeminiRAGPipeline:
-    """
-    RAG Pipeline với Neo4j Retriever và Gemini API
-    """
-    
     _instance = None
     
     def __new__(cls, *args, **kwargs):
-        """Singleton pattern để tái sử dụng connection"""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
@@ -113,7 +107,6 @@ class GeminiRAGPipeline:
         print(f"   Top-K: {top_k}")
     
     def _format_context(self, results: List[RetrievedChunk]) -> str:
-        """Format retrieved results thành context string"""
         context_parts = []
         
         for i, result in enumerate(results, 1):
@@ -139,7 +132,6 @@ class GeminiRAGPipeline:
         return "\n".join(context_parts)
     
     def _extract_sources(self, results: List[RetrievedChunk]) -> List[Dict]:
-        """Extract source citations từ results"""
         sources = []
         for r in results:
             sources.append({
@@ -159,7 +151,6 @@ class GeminiRAGPipeline:
         query_date: str = None,
         doc_types: List[str] = None,
     ) -> RAGResponse:
-        """Execute RAG query"""
         k = top_k or self.top_k
         
         results = self.retriever.search(
@@ -199,7 +190,6 @@ class GeminiRAGPipeline:
         query_date: str = None,
         doc_types: List[str] = None,
     ):
-        """Execute RAG query with streaming response - yields text chunks"""
         from typing import Generator
         
         k = top_k or self.top_k
@@ -220,7 +210,6 @@ class GeminiRAGPipeline:
         context = self._format_context(results)
         user_prompt = USER_PROMPT_TEMPLATE.format(query=query, context=context)
         
-        # Use streaming generation
         response = self.model.generate_content(user_prompt, stream=True)
         
         for chunk in response:
@@ -228,12 +217,10 @@ class GeminiRAGPipeline:
                 yield chunk.text
     
     def close(self):
-        """Close connections"""
         self.retriever.close()
         GeminiRAGPipeline._instance = None
         self._initialized = False
 
 
 def get_pipeline() -> GeminiRAGPipeline:
-    """Get or create RAG pipeline singleton"""
     return GeminiRAGPipeline()

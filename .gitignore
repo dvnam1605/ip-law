@@ -82,6 +82,7 @@ Thumbs.db
 *.pdf
 *.docx
 output/
+output-ban-an/
 vietnamese_embedding/
 
 # Docker
@@ -92,3 +93,4 @@ docker-compose.override.yml
 *.pem
 *.key
 secrets/
+.agents

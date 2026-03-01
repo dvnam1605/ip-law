@@ -1,15 +1,3 @@
-"""
-Legal Document Chunker V2 - Improved Version (Neo4j Only)
-=========================================================
-Cải tiến:
-1. Giảm null dieu từ 27.5% xuống <10%
-2. Thêm chunk_type field (header/content/appendix/signature)
-3. Thêm metadata pháp lý: effective_date, issuing_agency, signing_date
-4. Cải thiện regex patterns cho Điều
-5. Kế thừa dieu từ chunk trước cho continuation chunks
-6. Export embeddings cho Neo4j (không dùng Qdrant)
-"""
-
 import os
 import re
 import json
@@ -17,79 +5,62 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict, field
 from urllib.parse import unquote
-from datetime import datetime
+from datetime import datetime, timedelta
 
-# Embedding
 from sentence_transformers import SentenceTransformer
 import torch
 
-# LangChain text splitting
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
-# ============ CONFIGURATION ============
-# GPU Configuration - Use card 2 (CUDA device 1)
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 CUDA_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 EMBEDDING_MODEL_PATH = "./vietnamese_embedding"
-VECTOR_SIZE = 1024  # BGE-M3 dimension
+VECTOR_SIZE = 1024
 
-# Chunking config
 CHUNK_SIZE = 4000
 CHUNK_OVERLAP = 200
 
-# Paths
 TXT_FOLDER = "./output"
 OUTPUT_JSON = "./chunks_output_v2.json"
 OUTPUT_WITH_EMBEDDINGS = "./chunks_output_v2_with_embeddings.json"
 EFFECTIVE_DATES_JSON = "./effective_dates.json"
 
 
-# ============ DATA CLASSES ============
 @dataclass
 class DocumentMetadata:
-    """Metadata cho mỗi văn bản pháp luật - Version 2 với fields mới"""
-    # Basic info
-    title: str  # Tên file nguồn
-    doc_type: str  # Loại văn bản: Luật, Nghị định, Thông tư
-    doc_number: str  # Số hiệu: 23/2018/QH14
-    doc_name: str  # Tên: Luật Cạnh tranh
+    title: str
+    doc_type: str
+    doc_number: str
+    doc_name: str
     
-    # Legal structure
-    phan: Optional[str] = None  # Phần
-    chuong: Optional[str] = None  # Chương
-    chuong_title: Optional[str] = None  # Tiêu đề chương
-    muc: Optional[str] = None  # Mục
-    dieu: Optional[str] = None  # Điều
-    dieu_title: Optional[str] = None  # Tiêu đề điều
-    chunk_index: int = 0  # Thứ tự chunk trong document
+    phan: Optional[str] = None
+    chuong: Optional[str] = None
+    chuong_title: Optional[str] = None
+    muc: Optional[str] = None
+    dieu: Optional[str] = None
+    dieu_title: Optional[str] = None
+    chunk_index: int = 0
     
-    # NEW FIELDS for Neo4j
-    chunk_type: str = "content"  # header/content/appendix/signature
-    effective_date: Optional[str] = None  # Ngày có hiệu lực (YYYY-MM-DD)
-    issuing_agency: Optional[str] = None  # Cơ quan ban hành
-    signing_date: Optional[str] = None  # Ngày ký (YYYY-MM-DD)
-    status: str = "active"  # active/expired/replaced
-    
-    # Chunk relationship hints
-    is_continuation: bool = False  # True nếu chunk này tiếp tục từ chunk trước
+    chunk_type: str = "content"
+    effective_date: Optional[str] = None
+    issuing_agency: Optional[str] = None
+    signing_date: Optional[str] = None
+    status: str = "active"
+    is_continuation: bool = False
 
 
 @dataclass
 class Chunk:
-    """Một chunk văn bản"""
     content: str
     metadata: DocumentMetadata
 
 
-# ============ TXT READER ============
 def read_txt(txt_path: str) -> str:
-    """Đọc nội dung file TXT và loại bỏ số trang"""
     try:
         with open(txt_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        # Loại bỏ số trang
         cleaned_content = remove_page_numbers(content)
         return cleaned_content.strip()
     except Exception as e:
@@ -98,22 +69,17 @@ def read_txt(txt_path: str) -> str:
 
 
 def remove_page_numbers(text: str) -> str:
-    """Loại bỏ số trang và các thông tin format không cần thiết"""
     lines = text.split('\n')
     cleaned_lines = []
     
     for line in lines:
         stripped = line.strip()
-        # Bỏ số trang đơn
         if stripped.isdigit():
             continue
-        # Bỏ dạng "- 1 -" hoặc "— 2 —"
         if re.match(r'^[-–—\s]*\d+[-–—\s]*$', stripped):
             continue
-        # Bỏ "Trang X", "Page X"
         if re.match(r'^(Trang|Page|trang|page)\s*\d+$', stripped, re.IGNORECASE):
             continue
-        # Bỏ thông tin format Word (Formatted: ...)
         if stripped.startswith('Formatted:'):
             continue
         cleaned_lines.append(line)
@@ -121,13 +87,10 @@ def remove_page_numbers(text: str) -> str:
     return '\n'.join(cleaned_lines)
 
 
-# ============ IMPROVED METADATA EXTRACTION ============
 def extract_doc_type(filename: str, content: str) -> str:
-    """Xác định loại văn bản - ưu tiên theo filename trước"""
     filename_lower = filename.lower()
-    content_header = content[:500].lower()  # Chỉ check header
+    content_header = content[:500].lower()
     
-    # Check theo filename first (more reliable)
     if 'thong+tu' in filename_lower or 'thông+tư' in filename_lower:
         if 'lien+tich' in filename_lower or 'liên+tịch' in filename_lower:
             return "Thông tư liên tịch"
@@ -159,7 +122,6 @@ def extract_doc_type(filename: str, content: str) -> str:
 
 
 def extract_doc_number(content: str) -> str:
-    """Trích xuất số hiệu văn bản"""
     patterns = [
         r'(?:Luật|Nghị định|Thông tư|Quyết định|Bộ luật)\s*số[:\s]*(\d+[\/\-]\d+[\/\-][\w\-]+)',
         r'Số[:\s]*(\d+[\/\-]\d+[\/\-][\w\-]+)',
@@ -176,18 +138,16 @@ def extract_doc_number(content: str) -> str:
 
 
 def extract_doc_name(content: str, filename: str) -> str:
-    """Trích xuất tên văn bản"""
-    # Tìm LUẬT\n<TÊN LUẬT>
+
     match = re.search(r'LUẬT\s*\n\s*([A-ZÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬĐÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ\s]+)', content[:2000])
     if match:
         return "Luật " + match.group(1).strip().title()
     
-    # Tìm BỘ LUẬT\n<TÊN>
+
     match = re.search(r'BỘ LUẬT\s*\n\s*([A-ZÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬĐÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ\s]+)', content[:2000])
     if match:
         return "Bộ luật " + match.group(1).strip().title()
     
-    # Fallback: dùng tên file
     name = unquote(filename.replace('+', ' '))
     name = re.sub(r'^\d+\.\d*\.?\s*', '', name)
     name = re.sub(r'\.txt$', '', name, flags=re.IGNORECASE)
@@ -195,7 +155,6 @@ def extract_doc_name(content: str, filename: str) -> str:
 
 
 def extract_issuing_agency(content: str) -> Optional[str]:
-    """Trích xuất cơ quan ban hành"""
     header = content[:1000].upper()
     
     if 'QUỐC HỘI' in header:
@@ -213,7 +172,7 @@ def extract_issuing_agency(content: str) -> Optional[str]:
     elif 'BỘ CÔNG THƯƠNG' in header:
         return "Bộ Công Thương"
     elif 'BỘ ' in header:
-        # Generic ministry extraction
+
         match = re.search(r'(BỘ\s+[A-ZÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬĐÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ\s]+)', header)
         if match:
             return match.group(1).strip().title()
@@ -222,8 +181,6 @@ def extract_issuing_agency(content: str) -> Optional[str]:
 
 
 def extract_signing_date(content: str) -> Optional[str]:
-    """Trích xuất ngày ký từ header"""
-    # Pattern: "Hà Nội, ngày 22 tháng 9 năm 2006"
     patterns = [
         r'ngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+(\d{4})',
         r'(\d{1,2})/(\d{1,2})/(\d{4})',
@@ -240,9 +197,6 @@ def extract_signing_date(content: str) -> Optional[str]:
 
 
 def extract_effective_date(content: str, signing_date: Optional[str] = None) -> Optional[str]:
-    """Trích xuất ngày có hiệu lực"""
-    
-    # Pattern 1: "có hiệu lực thi hành từ ngày 01 tháng 7 năm 2006"
     match = re.search(
         r'có\s+hiệu\s+lực.*?(?:từ|kể từ)\s+ngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+(\d{4})',
         content, re.IGNORECASE
@@ -269,48 +223,35 @@ def extract_effective_date(content: str, signing_date: Optional[str] = None) -> 
     return None
 
 
-# ============ IMPROVED DIEU EXTRACTION ============
 def extract_dieu_info(text: str, previous_dieu: Optional[str] = None, 
                       previous_dieu_title: Optional[str] = None) -> Tuple[Optional[str], Optional[str], bool]:
-    """
-    Extract Điều number and title from chunk text
-    Returns: (dieu, dieu_title, is_continuation)
-    """
+    """Returns: (dieu, dieu_title, is_continuation)"""
     text_stripped = text.strip()
     
-    # Pattern 1: Điều ở đầu chunk (standard format)
-    # "Điều 1. Phạm vi điều chỉnh"
     match = re.match(r'(Điều\s+\d+[a-z]?)\.?\s*([^\n]*)', text_stripped)
     if match:
         dieu = match.group(1)
         title = match.group(2).strip() if match.group(2) else None
-        # Clean up title - remove if it's just continuation text
         if title and len(title) < 3:
             title = None
         return dieu, title, False
     
-    # Pattern 2: "Điều X được sửa đổi, bổ sung như sau:"
     match = re.search(r'(\d+)\.\s*(Điều\s+\d+[a-z]?)\s+được\s+sửa\s+đổi', text_stripped[:500])
     if match:
         return match.group(2), "sửa đổi, bổ sung", False
     
-    # Pattern 3: Chunk bắt đầu bằng '"Điều X. Title"' (trích dẫn nội dung điều mới)
     match = re.search(r'^["\']?(Điều\s+\d+[a-z]?)\.?\s*([^"\'\n]*)["\']?', text_stripped[:500])
     if match:
         return match.group(1), match.group(2).strip() or None, False
     
-    # Pattern 4: Điều xuất hiện trong text (không ở đầu) - tìm Điều đầu tiên
     match = re.search(r'(Điều\s+\d+[a-z]?)\.?\s*([^\n]{0,100})', text_stripped[:1000])
     if match:
         dieu = match.group(1)
         title = match.group(2).strip()
-        # Clean title
         if title and (len(title) < 3 or title.startswith('của') or title.startswith('và')):
             title = None
         return dieu, title, False
     
-    # Pattern 5: Kế thừa từ chunk trước nếu là continuation
-    # Không kế thừa nếu chunk bắt đầu bằng header structure
     if previous_dieu:
         starts_with_header = any(
             text_stripped.upper().startswith(h) 
@@ -323,18 +264,13 @@ def extract_dieu_info(text: str, previous_dieu: Optional[str] = None,
 
 
 def detect_chunk_type(text: str, chunk_index: int, total_chunks: int) -> str:
-    """
-    Detect type of chunk based on content
-    Returns: "header" | "content" | "appendix" | "signature"
-    """
+    """Returns: 'header' | 'content' | 'appendix' | 'signature'"""
     text_upper = text[:800].upper()
     text_lower = text[:800].lower()
     
-    # First chunk is usually header/preamble
     if chunk_index == 0:
         return "header"
     
-    # Header detection - government/legislative bodies
     header_keywords = [
         'QUỐC HỘI', 'CHÍNH PHỦ', 'CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM',
         'ĐỘC LẬP - TỰ DO - HẠNH PHÚC', 'NƯỚC CỘNG HÒA'
@@ -343,12 +279,11 @@ def detect_chunk_type(text: str, chunk_index: int, total_chunks: int) -> str:
         if not re.search(r'Điều\s+\d+', text):
             return "header"
     
-    # Appendix detection
+
     appendix_keywords = ['PHỤ LỤC', 'BIỂU MẪU', 'MẪU SỐ', 'DANH MỤC']
     if any(kw in text_upper for kw in appendix_keywords):
         return "appendix"
     
-    # Signature detection (usually at the end)
     if chunk_index >= total_chunks - 3:
         signature_patterns = [
             r'(TM\.|T\.M\.|THAY MẶT)',
@@ -362,22 +297,13 @@ def detect_chunk_type(text: str, chunk_index: int, total_chunks: int) -> str:
     return "content"
 
 
-# ============ IMPROVED CHUNKING ============
 def chunk_by_dieu_v2(content: str, base_metadata: DocumentMetadata) -> List[Chunk]:
-    """
-    Chunk văn bản theo Điều - Version 2 với cải tiến:
-    1. Kế thừa Điều từ chunk trước
-    2. Detect chunk_type
-    3. Extract metadata pháp lý
-    """
     chunks = []
     
-    # Extract document-level metadata
     signing_date = extract_signing_date(content)
     effective_date = extract_effective_date(content, signing_date)
     issuing_agency = extract_issuing_agency(content)
     
-    # Separator chính là "Điều + số"
     separator = r"Điều \d"
     
     text_splitter = RecursiveCharacterTextSplitter(
@@ -391,7 +317,6 @@ def chunk_by_dieu_v2(content: str, base_metadata: DocumentMetadata) -> List[Chun
     split_texts = text_splitter.split_text(content)
     total_chunks = len(split_texts)
     
-    # Track context
     current_phan = None
     current_chuong = None
     current_chuong_title = None
@@ -403,15 +328,12 @@ def chunk_by_dieu_v2(content: str, base_metadata: DocumentMetadata) -> List[Chun
         if not text.strip():
             continue
         
-        # Detect chunk type
         chunk_type = detect_chunk_type(text, idx, total_chunks)
         
-        # Update context from headers
         phan_match = re.search(r'(PHẦN THỨ\s+\w+)', text, re.IGNORECASE)
         if phan_match:
             current_phan = phan_match.group(1)
         
-        # Improved Chương matching
         chuong_patterns = [
             r'(Chương\s+[IVXLC]+)[:\s]*\n\s*([A-ZÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬĐÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ\s,]+)',
             r'(CHƯƠNG\s+[IVXLC]+)[:\s]*\n\s*([A-ZÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬĐÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ\s,]+)',
@@ -428,12 +350,10 @@ def chunk_by_dieu_v2(content: str, base_metadata: DocumentMetadata) -> List[Chun
         if muc_match:
             current_muc = muc_match.group(1)
         
-        # Extract Điều using improved function
         dieu_num, dieu_title, is_continuation = extract_dieu_info(
             text, previous_dieu, previous_dieu_title
         )
         
-        # Update previous dieu for next iteration
         if dieu_num and not is_continuation:
             previous_dieu = dieu_num
             previous_dieu_title = dieu_title
@@ -462,7 +382,6 @@ def chunk_by_dieu_v2(content: str, base_metadata: DocumentMetadata) -> List[Chun
     return chunks
 
 
-# ============ EMBEDDING ============
 class EmbeddingModel:
     def __init__(self, model_path: str, device: str = None):
         self.device = device or CUDA_DEVICE
@@ -476,7 +395,6 @@ class EmbeddingModel:
         print(f"Model loaded. Vector size: {self.model.get_sentence_embedding_dimension()}")
     
     def encode(self, texts: List[str], batch_size: int = 32) -> List[List[float]]:
-        """Tạo embeddings cho danh sách texts"""
         embeddings = self.model.encode(
             texts, 
             show_progress_bar=True,
@@ -489,21 +407,17 @@ class EmbeddingModel:
         return self.model.get_sentence_embedding_dimension()
 
 
-# ============ MAIN PIPELINE ============
 def process_txt_v2(txt_path: str, embedding_model: EmbeddingModel) -> List[Dict]:
-    """Xử lý một file TXT với chunker V2"""
     filename = Path(txt_path).name
     print(f"\n{'='*60}")
     print(f"Processing: {filename}")
     
-    # 1. Đọc TXT
     content = read_txt(txt_path)
     if not content:
         print("  Không đọc được nội dung!")
         return []
     print(f"  Đọc được {len(content)} characters")
     
-    # 2. Trích xuất metadata cơ bản
     base_metadata = DocumentMetadata(
         title=filename,
         doc_type=extract_doc_type(filename, content),
@@ -514,12 +428,10 @@ def process_txt_v2(txt_path: str, embedding_model: EmbeddingModel) -> List[Dict]
     print(f"  Số hiệu: {base_metadata.doc_number}")
     print(f"  Tên: {base_metadata.doc_name}")
     
-    # 3. Chunk theo Điều (V2)
     chunks = chunk_by_dieu_v2(content, base_metadata)
     print(f"  Tạo được {len(chunks)} chunks")
     
     if not chunks:
-        # Fallback
         print("  Không tìm thấy cấu trúc Điều, dùng chunking đơn giản...")
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=CHUNK_SIZE,
@@ -539,12 +451,10 @@ def process_txt_v2(txt_path: str, embedding_model: EmbeddingModel) -> List[Dict]
         ]
         print(f"  Tạo được {len(chunks)} chunks (fallback)")
     
-    # 4. Tạo embeddings
     print("  Đang tạo embeddings...")
     texts = [chunk.content for chunk in chunks]
     embeddings = embedding_model.encode(texts)
     
-    # 5. Trả về kết quả
     results = []
     for chunk, embedding in zip(chunks, embeddings):
         results.append({
@@ -557,7 +467,6 @@ def process_txt_v2(txt_path: str, embedding_model: EmbeddingModel) -> List[Dict]
 
 
 def analyze_chunks(chunks_data: List[Dict]) -> Dict:
-    """Phân tích chất lượng chunks"""
     total = len(chunks_data)
     stats = {
         'total': total,
@@ -568,7 +477,6 @@ def analyze_chunks(chunks_data: List[Dict]) -> Dict:
     
     for chunk in chunks_data:
         meta = chunk.get('metadata', {})
-        
         # Count nulls
         for key, value in meta.items():
             if key not in stats['null_counts']:
@@ -578,11 +486,9 @@ def analyze_chunks(chunks_data: List[Dict]) -> Dict:
             else:
                 stats['null_counts'][key]['not_null'] += 1
         
-        # Count chunk types
         chunk_type = meta.get('chunk_type', 'unknown')
         stats['chunk_types'][chunk_type] = stats['chunk_types'].get(chunk_type, 0) + 1
         
-        # Count by doc type
         doc_type = meta.get('doc_type', 'unknown')
         stats['by_doc_type'][doc_type] = stats['by_doc_type'].get(doc_type, 0) + 1
     
@@ -590,7 +496,6 @@ def analyze_chunks(chunks_data: List[Dict]) -> Dict:
 
 
 def print_analysis(stats: Dict):
-    """In phân tích"""
     print(f"\n{'='*60}")
     print("PHÂN TÍCH CHẤT LƯỢNG CHUNKS")
     print(f"{'='*60}")
@@ -612,12 +517,10 @@ def print_analysis(stats: Dict):
 
 
 def main():
-    """Main entry point for V2"""
     print("="*60)
     print("LEGAL DOCUMENT CHUNKING PIPELINE V2")
     print("="*60)
     
-    # Paths
     txt_folder = Path(TXT_FOLDER)
     if not txt_folder.exists():
         txt_folder = Path(".")
@@ -629,7 +532,6 @@ def main():
     
     print(f"Tìm thấy {len(txt_files)} file TXT")
     
-    # Load embedding model
     model_path = Path(EMBEDDING_MODEL_PATH)
     if not model_path.exists():
         model_path = Path("vietnamese_embedding")
@@ -637,7 +539,6 @@ def main():
     embedding_model = EmbeddingModel(str(model_path))
     vector_size = embedding_model.get_dimension()
     
-    # Xử lý từng TXT
     all_results = []
     for txt_file in txt_files:
         results = process_txt_v2(str(txt_file), embedding_model)
@@ -646,11 +547,9 @@ def main():
     print(f"\n{'='*60}")
     print(f"TỔNG KẾT: Đã tạo {len(all_results)} chunks từ {len(txt_files)} files")
     
-    # Analyze quality
     stats = analyze_chunks(all_results)
     print_analysis(stats)
     
-    # Export to JSON (without embeddings for review)
     print(f"\nExporting to {OUTPUT_JSON}...")
     json_data = []
     for r in all_results:
@@ -663,11 +562,10 @@ def main():
         json.dump(json_data, f, ensure_ascii=False, indent=2)
     print(f"Exported {len(json_data)} chunks (metadata only) to {OUTPUT_JSON}")
     
-    # Export WITH embeddings for Neo4j import
     embeddings_file = OUTPUT_JSON.replace('.json', '_with_embeddings.json')
     print(f"\nExporting with embeddings to {embeddings_file}...")
     with open(embeddings_file, "w", encoding="utf-8") as f:
-        json.dump(all_results, f, ensure_ascii=False)  # No indent to save space
+        json.dump(all_results, f, ensure_ascii=False)
     print(f"Exported {len(all_results)} chunks with embeddings to {embeddings_file}")
     
     print(f"\n{'='*60}")

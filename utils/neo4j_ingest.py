@@ -1,15 +1,3 @@
-"""
-Neo4j Ingest Script for Legal RAG
-==================================
-Script để ingest chunks vào Neo4j với mô hình Chunk-as-Node
-
-Features:
-- Tạo :Document và :Chunk nodes
-- Tạo relationships: PART_OF, NEXT
-- Tạo vector index cho embedding search
-- Merge metadata từ effective_dates.json
-"""
-
 import json
 import os
 from pathlib import Path
@@ -26,7 +14,6 @@ except ImportError:
     print("⚠️ neo4j package not installed. Run: pip install neo4j")
 
 
-# ============ CONFIGURATION ============
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "aa")
@@ -35,7 +22,6 @@ CHUNKS_JSON = "./chunks_output_v2.json"
 EMBEDDINGS_JSON = "./chunks_output_v2_with_embeddings.json"
 
 
-# ============ NEO4J CLIENT ============
 class Neo4jClient:
     def __init__(self, uri: str, user: str, password: str):
         if not NEO4J_AVAILABLE:
@@ -45,7 +31,6 @@ class Neo4jClient:
         self._verify_connection()
     
     def _verify_connection(self):
-        """Verify Neo4j connection"""
         with self.driver.session() as session:
             result = session.run("RETURN 1 as test")
             record = result.single()
@@ -56,23 +41,18 @@ class Neo4jClient:
         self.driver.close()
     
     def run_query(self, query: str, parameters: Dict = None) -> List[Dict]:
-        """Execute a Cypher query"""
         with self.driver.session() as session:
             result = session.run(query, parameters or {})
             return [record.data() for record in result]
     
     def run_write(self, query: str, parameters: Dict = None):
-        """Execute a write query"""
         with self.driver.session() as session:
             session.execute_write(lambda tx: tx.run(query, parameters or {}))
 
 
-# ============ SCHEMA SETUP ============
 def setup_schema(client: Neo4jClient):
-    """Setup Neo4j schema with constraints and indexes"""
     print("\n📋 Setting up Neo4j schema...")
     
-    # Constraints
     constraints = [
         "CREATE CONSTRAINT doc_id IF NOT EXISTS FOR (d:Document) REQUIRE d.doc_id IS UNIQUE",
         "CREATE CONSTRAINT chunk_id IF NOT EXISTS FOR (c:Chunk) REQUIRE c.chunk_id IS UNIQUE",
@@ -88,7 +68,6 @@ def setup_schema(client: Neo4jClient):
             else:
                 print(f"  ⚠️ {e}")
     
-    # Indexes for filtering
     indexes = [
         "CREATE INDEX chunk_doc_id IF NOT EXISTS FOR (c:Chunk) ON (c.doc_id)",
         "CREATE INDEX chunk_dieu IF NOT EXISTS FOR (c:Chunk) ON (c.dieu)",
@@ -112,10 +91,8 @@ def setup_schema(client: Neo4jClient):
 
 
 def setup_vector_index(client: Neo4jClient, dimension: int = 1024):
-    """Setup vector index for similarity search"""
     print(f"\n🔢 Setting up vector index (dimension={dimension})...")
     
-    # Check if vector index exists
     check_query = """
     SHOW INDEXES 
     WHERE name = 'chunk_embedding_index'
@@ -129,7 +106,6 @@ def setup_vector_index(client: Neo4jClient, dimension: int = 1024):
     except:
         pass
     
-    # Create vector index
     vector_index_query = f"""
     CREATE VECTOR INDEX chunk_embedding_index IF NOT EXISTS
     FOR (c:Chunk) ON (c.embedding)
@@ -149,9 +125,7 @@ def setup_vector_index(client: Neo4jClient, dimension: int = 1024):
         print("  💡 Note: Vector index requires Neo4j 5.11+ with vector search plugin")
 
 
-# ============ DATA LOADING ============
 def load_effective_dates(filepath: str) -> Dict[str, Dict]:
-    """Load effective dates mapping by filename"""
     if not os.path.exists(filepath):
         print(f"⚠️ {filepath} not found, using default metadata")
         return {}
@@ -159,7 +133,6 @@ def load_effective_dates(filepath: str) -> Dict[str, Dict]:
     with open(filepath, 'r', encoding='utf-8') as f:
         data = json.load(f)
     
-    # Create mapping by filename
     mapping = {}
     for doc in data.get('documents', []):
         filename = doc.get('filename')
@@ -171,7 +144,6 @@ def load_effective_dates(filepath: str) -> Dict[str, Dict]:
 
 
 def load_chunks(filepath: str) -> List[Dict]:
-    """Load chunks from JSON file"""
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Chunks file not found: {filepath}")
     
@@ -183,17 +155,13 @@ def load_chunks(filepath: str) -> List[Dict]:
 
 
 def generate_chunk_id(content: str, doc_id: str, chunk_index: int) -> str:
-    """Generate unique chunk ID"""
     hash_input = f"{doc_id}_{chunk_index}_{content[:100]}"
     return hashlib.md5(hash_input.encode()).hexdigest()[:16]
 
 
-# ============ INGEST FUNCTIONS ============
 def ingest_documents(client: Neo4jClient, chunks: List[Dict]):
-    """Create Document nodes from chunk metadata"""
     print("\n📁 Ingesting Document nodes...")
     
-    # Group chunks by document
     docs = {}
     for chunk in chunks:
         meta = chunk.get('metadata', {})
@@ -212,7 +180,6 @@ def ingest_documents(client: Neo4jClient, chunks: List[Dict]):
                 'status': meta.get('status', 'active'),
             }
     
-    # Create Document nodes
     query = """
     UNWIND $docs AS doc
     MERGE (d:Document {doc_id: doc.doc_id})
@@ -234,10 +201,8 @@ def ingest_documents(client: Neo4jClient, chunks: List[Dict]):
 
 
 def ingest_chunks(client: Neo4jClient, chunks: List[Dict], docs: Dict[str, Dict], batch_size: int = 100):
-    """Create Chunk nodes with PART_OF relationships"""
     print(f"\n📝 Ingesting {len(chunks)} Chunk nodes...")
     
-    # Prepare chunk data
     chunk_data = []
     for chunk in chunks:
         meta = chunk.get('metadata', {})
@@ -258,10 +223,8 @@ def ingest_chunks(client: Neo4jClient, chunks: List[Dict], docs: Dict[str, Dict]
             'dieu': meta.get('dieu'),
             'dieu_title': meta.get('dieu_title'),
             'is_continuation': meta.get('is_continuation', False),
-            # Embedding will be added separately if available
         })
     
-    # Batch insert
     query = """
     UNWIND $chunks AS chunk
     MERGE (c:Chunk {chunk_id: chunk.chunk_id})
@@ -291,7 +254,6 @@ def ingest_chunks(client: Neo4jClient, chunks: List[Dict], docs: Dict[str, Dict]
 
 
 def create_next_relationships(client: Neo4jClient):
-    """Create NEXT relationships between consecutive chunks"""
     print("\n🔗 Creating NEXT relationships...")
     
     query = """
@@ -307,7 +269,6 @@ def create_next_relationships(client: Neo4jClient):
     
     client.run_write(query)
     
-    # Count relationships
     count_query = "MATCH ()-[r:NEXT]->() RETURN count(r) as count"
     result = client.run_query(count_query)
     count = result[0]['count'] if result else 0
@@ -315,7 +276,6 @@ def create_next_relationships(client: Neo4jClient):
 
 
 def ingest_embeddings(client: Neo4jClient, embeddings_file: str, batch_size: int = 50):
-    """Add embeddings to Chunk nodes"""
     if not os.path.exists(embeddings_file):
         print(f"⚠️ Embeddings file not found: {embeddings_file}")
         return
@@ -325,7 +285,6 @@ def ingest_embeddings(client: Neo4jClient, embeddings_file: str, batch_size: int
     with open(embeddings_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
     
-    # Prepare data
     embedding_data = []
     for item in data:
         if 'embedding' in item and 'metadata' in item:
@@ -343,7 +302,6 @@ def ingest_embeddings(client: Neo4jClient, embeddings_file: str, batch_size: int
         print("  ⚠️ No embeddings found in file")
         return
     
-    # Batch update
     query = """
     UNWIND $data AS item
     MATCH (c:Chunk {chunk_id: item.chunk_id})
@@ -356,9 +314,7 @@ def ingest_embeddings(client: Neo4jClient, embeddings_file: str, batch_size: int
         print(f"  ✓ Updated {min(i+batch_size, len(embedding_data))}/{len(embedding_data)} embeddings")
 
 
-# ============ QUERY EXAMPLES ============
 def print_query_examples():
-    """Print example Cypher queries for Legal RAG"""
     print("\n" + "="*60)
     print("📖 EXAMPLE CYPHER QUERIES FOR LEGAL RAG")
     print("="*60)
@@ -433,7 +389,6 @@ LIMIT 20
 
 
 def get_stats(client: Neo4jClient):
-    """Get database statistics"""
     print("\n📊 Database Statistics")
     print("="*40)
     
@@ -455,7 +410,6 @@ def get_stats(client: Neo4jClient):
             print(f"  {name}: Error - {e}")
 
 
-# ============ MAIN ============
 def main():
     print("="*60)
     print("🗄️  NEO4J LEGAL RAG INGEST")

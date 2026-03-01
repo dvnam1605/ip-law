@@ -81,4 +81,4 @@ def convert_pdf_to_txt(input_folder: str, output_folder: str = None):
             error_count += 1
 
 if __name__ == "__main__":
-    convert_pdf_to_txt("tai_lieu_phap_luat")
+    convert_pdf_to_txt("ban-an", "output-ban-an")

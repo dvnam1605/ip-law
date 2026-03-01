@@ -19,7 +19,6 @@ except ImportError:
 
 @dataclass
 class RetrievedChunk:
-    """Kết quả retrieval"""
     chunk_id: str
     content: str
     score: float
@@ -36,13 +35,10 @@ class RetrievedChunk:
 
 class Neo4jLegalRetriever:
     """
-    Legal RAG Retriever sử dụng Neo4j
-    
     Query Flow:
-    1. Nhận câu hỏi + thời điểm truy vấn
-    2. Cypher filter: văn bản đang có hiệu lực
-    3. Vector search trên tập đã lọc
-    4. Dùng NEXT để lấy đủ context
+    1. Cypher filter: văn bản đang có hiệu lực
+    2. Vector search trên tập đã lọc
+    3. Dùng NEXT để lấy đủ context
     """
     
     def __init__(
@@ -72,13 +68,11 @@ class Neo4jLegalRetriever:
         self.driver.close()
     
     def _run_query(self, query: str, params: Dict = None) -> List[Dict]:
-        """Execute Cypher query"""
         with self.driver.session() as session:
             result = session.run(query, params or {})
             return [record.data() for record in result]
     
     def encode_query(self, query: str) -> List[float]:
-        """Encode query to embedding vector"""
         if self.embedding_model is None:
             raise ValueError("Embedding model not loaded")
         embedding = self.embedding_model.encode(query)
@@ -95,8 +89,6 @@ class Neo4jLegalRetriever:
         context_window: int = 1,
     ) -> List[RetrievedChunk]:
         """
-        Search với filtering theo hiệu lực pháp luật
-        
         Args:
             query: Câu hỏi tìm kiếm
             query_date: Ngày truy vấn (YYYY-MM-DD), default = today
@@ -105,16 +97,11 @@ class Neo4jLegalRetriever:
             top_k: Số kết quả trả về
             expand_context: Có lấy thêm context từ NEXT không
             context_window: Số chunks trước/sau để lấy context
-        
-        Returns:
-            List[RetrievedChunk]: Danh sách chunks đã rank
         """
         
-        # Default query_date = today
         if query_date is None:
             query_date = datetime.now().strftime("%Y-%m-%d")
         
-        # Step 1: Cypher filter - Get candidate chunk IDs
         candidates = self._filter_by_validity(query_date, doc_types, status)
         
         if not candidates:
@@ -127,15 +114,11 @@ class Neo4jLegalRetriever:
         else:
             print(f"   Sample IDs: {candidates[:5]}...")
         
-        
-        # Step 2: Vector search on filtered candidates
         if self.embedding_model:
             results = self._vector_search(query, candidates, top_k)
         else:
-            # Fallback: keyword search
             results = self._keyword_search(query, candidates, top_k)
         
-        # Step 3: Expand context if requested
         if expand_context and results:
             results = self._expand_context(results, context_window)
         
@@ -147,17 +130,11 @@ class Neo4jLegalRetriever:
         doc_types: List[str] = None,
         status: str = "active",
     ) -> List[str]:
-        """
-        Step 1: Cypher filter theo hiệu lực pháp luật
-        Returns list of valid chunk_ids
-        """
         
-        # Build filter conditions
         conditions = ["d.status = $status"]
         params = {"status": status, "query_date": query_date}
         
-        # Effective date filter (expiry_date removed - not in DB)
-        # Note: effective_date is stored as string in format "YYYY-MM-DD", so use string comparison
+        # effective_date is stored as string "YYYY-MM-DD", use string comparison
         conditions.append("(d.effective_date IS NULL OR d.effective_date <= $query_date)")
         
         # Doc type filter
@@ -182,9 +159,6 @@ class Neo4jLegalRetriever:
         candidate_ids: List[str],
         top_k: int,
     ) -> List[RetrievedChunk]:
-        """
-        Step 2: Vector search trên tập candidates
-        """
         query_embedding = self.encode_query(query)
         
         
@@ -193,7 +167,6 @@ class Neo4jLegalRetriever:
         MATCH (c:Chunk {chunk_id: cid})-[:PART_OF]->(d:Document)
         WHERE c.embedding IS NOT NULL
         
-        // Calculate cosine similarity manually
         WITH c, d,
              reduce(dot = 0.0, i IN range(0, size(c.embedding)-1) | 
                     dot + c.embedding[i] * $query_embedding[i]) AS dot_product,
@@ -252,16 +225,11 @@ class Neo4jLegalRetriever:
         candidate_ids: List[str],
         top_k: int,
     ) -> List[RetrievedChunk]:
-        """
-        Fallback: Keyword search khi không có embeddings
-        """
-        # Extract keywords from query
         keywords = [w.lower() for w in query.split() if len(w) > 2]
         
         if not keywords:
             return []
         
-        # Build CONTAINS conditions
         contains_conditions = " OR ".join([f"toLower(c.content) CONTAINS '{kw}'" for kw in keywords[:5]])
         
         cypher_query = f"""
@@ -269,7 +237,6 @@ class Neo4jLegalRetriever:
         MATCH (c:Chunk {{chunk_id: cid}})-[:PART_OF]->(d:Document)
         WHERE {contains_conditions}
         
-        // Simple scoring based on keyword matches
         WITH c, d, 
              size([kw IN $keywords WHERE toLower(c.content) CONTAINS kw]) AS match_count
         ORDER BY match_count DESC
@@ -316,7 +283,8 @@ class Neo4jLegalRetriever:
         context_window: int = 1,
     ) -> List[RetrievedChunk]:
         """
-        Step 3: Mở rộng context qua NEXT relationships
+        Mở rộng context qua NEXT relationships.
+        Note: Cypher doesn't allow parameters in variable-length relationships.
         """
         
         chunk_ids = [r.chunk_id for r in results]
@@ -326,15 +294,10 @@ class Neo4jLegalRetriever:
         cypher_query = f"""
         UNWIND $chunk_ids AS cid
         MATCH (c:Chunk {{chunk_id: cid}})
-        
-        // Get previous chunks
         OPTIONAL MATCH (prev)-[:NEXT*1..{context_window}]->(c)
         WITH c, collect(prev.content) AS prev_contents
-        
-        // Get next chunks  
         OPTIONAL MATCH (c)-[:NEXT*1..{context_window}]->(next)
         WITH c, prev_contents, collect(next.content) AS next_contents
-        
         RETURN 
             c.chunk_id AS chunk_id,
             CASE WHEN size(prev_contents) > 0 
@@ -349,7 +312,6 @@ class Neo4jLegalRetriever:
             "chunk_ids": chunk_ids
         })
         
-        # Merge context into results
         context_map = {r["chunk_id"]: r for r in context_results}
         
         for result in results:
@@ -361,7 +323,6 @@ class Neo4jLegalRetriever:
         return results
     
     def get_document_info(self, doc_number: str) -> Optional[Dict]:
-        """Get full document information"""
         query = """
         MATCH (d:Document {doc_number: $doc_number})
         RETURN d {.*} AS document
@@ -370,14 +331,12 @@ class Neo4jLegalRetriever:
         return results[0]["document"] if results else None
     
     def find_related_documents(self, doc_number: str) -> List[Dict]:
-        """Find documents that amend or are amended by this document"""
         query = """
         MATCH (d:Document {doc_number: $doc_number})
         
         // Documents that this one amends
         OPTIONAL MATCH (d2:Document {doc_number: d.amends})
         
-        // Documents that amend this one
         OPTIONAL MATCH (d3:Document)
         WHERE $doc_number IN d3.amended_by
         
@@ -391,9 +350,7 @@ class Neo4jLegalRetriever:
         return []
 
 
-# ============ CLI ============
 def main():
-    """Test retriever"""
     print("="*60)
     print("🔍 NEO4J LEGAL RAG RETRIEVER TEST")
     print("="*60)

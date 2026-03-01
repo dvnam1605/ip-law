@@ -1,4 +1,5 @@
 export type Role = 'user' | 'assistant';
+export type ChatMode = 'legal' | 'verdict' | 'smart';
 
 export interface Message {
   id: string;
@@ -6,6 +7,7 @@ export interface Message {
   content: string;
   timestamp: Date;
   isError?: boolean;
+  routeType?: string;
 }
 
 export interface ChatSession {
@@ -13,6 +15,7 @@ export interface ChatSession {
     title: string;
     messages: Message[];
     createdAt: Date;
+    mode?: ChatMode;
 }
 
 export interface User {

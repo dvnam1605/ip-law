@@ -12,8 +12,8 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled }) => {
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!input.trim() || disabled) return;
-    onSend(input);
+    if (!input.trim() || input.trim().length < 5 || disabled) return;
+    onSend(input.trim());
     setInput('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';

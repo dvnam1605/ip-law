@@ -1,7 +1,11 @@
 import { QueryRequest } from '../types';
+import type { ChatMode } from '../types';
 
-const API_URL = 'http://localhost:1605/api/query';
-const STREAM_API_URL = 'http://localhost:1605/api/query/stream';
+const API_BASE = `http://${window.location.hostname}:1605`;
+const API_URL = `${API_BASE}/api/query`;
+const STREAM_API_URL = `${API_BASE}/api/query/stream`;
+const VERDICT_STREAM_API_URL = `${API_BASE}/api/verdict/query/stream`;
+const SMART_STREAM_API_URL = `${API_BASE}/api/smart/query/stream`;
 
 /**
  * Sends a user query to the backend API (non-streaming).
@@ -52,12 +56,22 @@ export const sendQueryToBackendStream = async (
   query: string,
   onChunk: (chunk: string, fullText: string) => void,
   onComplete?: (fullText: string) => void,
-  onError?: (error: Error) => void
+  onError?: (error: Error) => void,
+  mode: ChatMode = 'legal',
+  onRoute?: (route: string) => void,
 ): Promise<void> => {
   try {
     const payload: QueryRequest = { query };
+    let url: string;
+    if (mode === 'smart') {
+      url = SMART_STREAM_API_URL;
+    } else if (mode === 'verdict') {
+      url = VERDICT_STREAM_API_URL;
+    } else {
+      url = STREAM_API_URL;
+    }
 
-    const response = await fetch(STREAM_API_URL, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -106,6 +120,14 @@ export const sendQueryToBackendStream = async (
 
           // Unescape và append
           const chunk = unescapeSSE(data);
+
+          // Check for route metadata from smart router
+          const routeMatch = chunk.trim().match(/^__ROUTE__(legal|verdict|combined)__$/);
+          if (routeMatch) {
+            onRoute?.(routeMatch[1]);
+            continue;
+          }
+
           fullText += chunk;
           onChunk(chunk, fullText);
         }
