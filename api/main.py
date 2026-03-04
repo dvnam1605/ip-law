@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
@@ -11,10 +11,29 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from core.rag_pipeline import get_pipeline, RAGResponse
 from core.verdict_rag_pipeline import get_verdict_pipeline, VerdictRAGResponse
 from core.smart_router import get_smart_router
 
+from db.database import get_db, init_db
+from db.models import User, ChatSession, Message
+from db.schemas import (
+    UserCreate, UserLogin, TokenResponse, UserRead,
+    SessionCreate, SessionRename, SessionRead,
+    MessageCreate, MessageRead, SessionWithMessages,
+)
+from db.auth import (
+    hash_password, verify_password, create_access_token, get_current_user,
+)
+
+
+# ═══════════════════════════════════════════════════════
+#  Pydantic models (existing RAG stuff)
+# ═══════════════════════════════════════════════════════
 
 class SmartQueryRequest(BaseModel):
     query: str = Field(..., description="Câu hỏi pháp luật hoặc tình huống", min_length=5, max_length=5000)
@@ -31,7 +50,7 @@ class QueryRequest(BaseModel):
             }
         }
     )
-    
+
     query: str = Field(..., description="Câu hỏi pháp luật", min_length=5, max_length=1000)
     top_k: Optional[int] = Field(5, ge=1, le=20, description="Số lượng tài liệu tham khảo (1-20)")
     query_date: Optional[str] = Field(None, description="Ngày truy vấn (YYYY-MM-DD)")
@@ -67,7 +86,7 @@ class VerdictQueryRequest(BaseModel):
             }
         }
     )
-    
+
     query: str = Field(..., description="Câu hỏi về tình huống/bản án", min_length=5, max_length=5000)
     top_k: Optional[int] = Field(8, ge=1, le=20, description="Số lượng tài liệu tham khảo (1-20)")
     ip_types: Optional[List[str]] = Field(None, description="Lọc theo loại SHTT")
@@ -99,23 +118,35 @@ class HealthResponse(BaseModel):
     version: str
 
 
+# ═══════════════════════════════════════════════════════
+#  App lifecycle
+# ═══════════════════════════════════════════════════════
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("🚀 Starting Legal RAG API...")
+
+    # Init database tables
+    try:
+        await init_db()
+        print("✅ PostgreSQL tables initialized")
+    except Exception as e:
+        print(f"❌ Failed to initialize PostgreSQL: {e}")
+
     try:
         pipeline = get_pipeline()
         print("✅ Legal RAG Pipeline initialized successfully")
     except Exception as e:
         print(f"❌ Failed to initialize Legal RAG Pipeline: {e}")
-    
+
     try:
         verdict_pipeline = get_verdict_pipeline()
         print("✅ Verdict RAG Pipeline initialized successfully")
     except Exception as e:
         print(f"❌ Failed to initialize Verdict RAG Pipeline: {e}")
-    
+
     yield
-    
+
     print("🛑 Shutting down Legal RAG API...")
     try:
         pipeline = get_pipeline()
@@ -132,7 +163,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Legal RAG Chatbot API",
     description="API tư vấn pháp luật Việt Nam sử dụng RAG với Neo4j và Gemini AI",
-    version="1.0.0",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
@@ -147,12 +178,16 @@ app.add_middleware(
 )
 
 
+# ═══════════════════════════════════════════════════════
+#  Health
+# ═══════════════════════════════════════════════════════
+
 @app.get("/", response_model=HealthResponse)
 async def root():
     return HealthResponse(
         status="ok",
         timestamp=datetime.now().isoformat(),
-        version="1.0.0"
+        version="2.0.0"
     )
 
 
@@ -161,28 +196,214 @@ async def health_check():
     return HealthResponse(
         status="ok",
         timestamp=datetime.now().isoformat(),
-        version="1.0.0"
+        version="2.0.0"
     )
 
+
+# ═══════════════════════════════════════════════════════
+#  Auth endpoints
+# ═══════════════════════════════════════════════════════
+
+@app.post("/api/auth/register", response_model=TokenResponse)
+async def register(data: UserCreate, db: AsyncSession = Depends(get_db)):
+    # Check if username exists
+    result = await db.execute(select(User).where(User.username == data.username))
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Tên đăng nhập đã tồn tại")
+
+    user = User(
+        username=data.username,
+        hashed_password=hash_password(data.password),
+    )
+    db.add(user)
+    await db.flush()  # get user.id
+    await db.refresh(user)
+
+    token = create_access_token(user.id, user.username)
+    return TokenResponse(
+        access_token=token,
+        user=UserRead.model_validate(user),
+    )
+
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.username == data.username))
+    user = result.scalar_one_or_none()
+
+    if not user or not verify_password(data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Sai tên đăng nhập hoặc mật khẩu")
+
+    token = create_access_token(user.id, user.username)
+    return TokenResponse(
+        access_token=token,
+        user=UserRead.model_validate(user),
+    )
+
+
+@app.get("/api/auth/me", response_model=UserRead)
+async def me(current_user: User = Depends(get_current_user)):
+    return UserRead.model_validate(current_user)
+
+
+# ═══════════════════════════════════════════════════════
+#  Chat Session endpoints
+# ═══════════════════════════════════════════════════════
+
+@app.get("/api/sessions", response_model=List[SessionRead])
+async def list_sessions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ChatSession)
+        .where(ChatSession.user_id == current_user.id)
+        .order_by(ChatSession.created_at.asc())
+    )
+    return [SessionRead.model_validate(s) for s in result.scalars().all()]
+
+
+@app.post("/api/sessions", response_model=SessionRead)
+async def create_session(
+    data: SessionCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    session = ChatSession(
+        user_id=current_user.id,
+        title=data.title,
+        mode=data.mode,
+    )
+    db.add(session)
+    await db.flush()
+    await db.refresh(session)
+    return SessionRead.model_validate(session)
+
+
+@app.patch("/api/sessions/{session_id}", response_model=SessionRead)
+async def rename_session(
+    session_id: str,
+    data: SessionRename,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session không tồn tại")
+
+    session.title = data.title
+    await db.flush()
+    await db.refresh(session)
+    return SessionRead.model_validate(session)
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session không tồn tại")
+
+    await db.delete(session)
+    return {"detail": "Đã xóa session"}
+
+
+@app.get("/api/sessions/{session_id}/messages", response_model=List[MessageRead])
+async def get_messages(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Verify ownership
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Session không tồn tại")
+
+    result = await db.execute(
+        select(Message)
+        .where(Message.session_id == session_id)
+        .order_by(Message.created_at.asc())
+    )
+    return [MessageRead.model_validate(m) for m in result.scalars().all()]
+
+
+@app.post("/api/sessions/{session_id}/messages", response_model=MessageRead)
+async def add_message(
+    session_id: str,
+    data: MessageCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Verify ownership
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session không tồn tại")
+
+    msg = Message(
+        session_id=session_id,
+        role=data.role,
+        content=data.content,
+        route_type=data.route_type,
+    )
+    db.add(msg)
+
+    # Auto-rename session on first user message
+    if data.role == "user" and session.title == "Đoạn chat mới":
+        session.title = data.content[:30] + ("..." if len(data.content) > 30 else "")
+
+    await db.flush()
+    await db.refresh(msg)
+    return MessageRead.model_validate(msg)
+
+
+# ═══════════════════════════════════════════════════════
+#  RAG query endpoints (unchanged logic)
+# ═══════════════════════════════════════════════════════
 
 @app.post("/api/query", response_model=QueryResponse)
 async def query_legal(request: QueryRequest):
 
     start_time = datetime.now()
-    
+
     try:
         pipeline = get_pipeline()
-        
+
         result = pipeline.query(
             query=request.query,
             top_k=request.top_k,
             query_date=request.query_date,
             doc_types=request.doc_types
         )
-        
+
         processing_time = (datetime.now() - start_time).total_seconds() * 1000
         sources = [SourceInfo(**s) for s in result.sources]
-        
+
         return QueryResponse(
             success=True,
             query=result.query,
@@ -191,7 +412,7 @@ async def query_legal(request: QueryRequest):
             retrieved_chunks=result.retrieved_chunks,
             processing_time_ms=round(processing_time, 2)
         )
-        
+
     except Exception as e:
         processing_time = (datetime.now() - start_time).total_seconds() * 1000
         raise HTTPException(
@@ -216,12 +437,12 @@ async def query_legal_get(
 @app.post("/api/query/stream")
 async def query_legal_stream(request: QueryRequest):
     from fastapi.responses import StreamingResponse
-    
+
     async def generate():
         try:
             pipeline = get_pipeline()
-            
-            for chunk in pipeline.query_stream(
+
+            async for chunk in pipeline.query_stream(
                 query=request.query,
                 top_k=request.top_k,
                 query_date=request.query_date,
@@ -229,12 +450,12 @@ async def query_legal_stream(request: QueryRequest):
             ):
                 escaped = chunk.replace('\\', '\\\\').replace('\n', '\\n')
                 yield f"data: {escaped}\n\n"
-            
+
             yield "data: [DONE]\n\n"
-            
+
         except Exception as e:
             yield f"data: [ERROR]{str(e)}\n\n"
-    
+
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
@@ -249,20 +470,20 @@ async def query_legal_stream(request: QueryRequest):
 @app.post("/api/verdict/query", response_model=VerdictQueryResponse)
 async def query_verdict(request: VerdictQueryRequest):
     start_time = datetime.now()
-    
+
     try:
         pipeline = get_verdict_pipeline()
-        
+
         result = pipeline.query(
             query=request.query,
             top_k=request.top_k,
             ip_types=request.ip_types,
             trial_level=request.trial_level
         )
-        
+
         processing_time = (datetime.now() - start_time).total_seconds() * 1000
         sources = [VerdictSourceInfo(**s) for s in result.sources]
-        
+
         return VerdictQueryResponse(
             success=True,
             query=result.query,
@@ -271,7 +492,7 @@ async def query_verdict(request: VerdictQueryRequest):
             retrieved_chunks=result.retrieved_chunks,
             processing_time_ms=round(processing_time, 2)
         )
-        
+
     except Exception as e:
         processing_time = (datetime.now() - start_time).total_seconds() * 1000
         raise HTTPException(
@@ -295,12 +516,12 @@ async def query_verdict_get(
 @app.post("/api/verdict/query/stream")
 async def query_verdict_stream(request: VerdictQueryRequest):
     from fastapi.responses import StreamingResponse
-    
+
     async def generate():
         try:
             pipeline = get_verdict_pipeline()
-            
-            for chunk in pipeline.query_stream(
+
+            async for chunk in pipeline.query_stream(
                 query=request.query,
                 top_k=request.top_k,
                 ip_types=request.ip_types,
@@ -308,12 +529,12 @@ async def query_verdict_stream(request: VerdictQueryRequest):
             ):
                 escaped = chunk.replace('\\', '\\\\').replace('\n', '\\n')
                 yield f"data: {escaped}\n\n"
-            
+
             yield "data: [DONE]\n\n"
-            
+
         except Exception as e:
             yield f"data: [ERROR]{str(e)}\n\n"
-    
+
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
@@ -332,7 +553,7 @@ async def smart_query_stream(request: SmartQueryRequest):
     async def generate():
         try:
             router = get_smart_router()
-            for chunk in router.route_and_stream(query=request.query):
+            async for chunk in router.route_and_stream(query=request.query):
                 escaped = chunk.replace('\\', '\\\\').replace('\n', '\\n')
                 yield f"data: {escaped}\n\n"
             yield "data: [DONE]\n\n"

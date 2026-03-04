@@ -1,6 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Message, ChatSession, User, ChatMode } from './types';
-import { sendQueryToBackendStream } from './services/apiService';
+import {
+  sendQueryToBackendStream,
+  getMe,
+  clearToken,
+  fetchSessions,
+  createSessionApi,
+  renameSessionApi,
+  deleteSessionApi,
+  fetchMessages,
+  saveMessage,
+} from './services/apiService';
 import MessageBubble from './components/MessageBubble';
 import InputArea from './components/InputArea';
 import TypingIndicator from './components/TypingIndicator';
@@ -16,6 +26,7 @@ const App: React.FC = () => {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [chatMode, setChatMode] = useState<ChatMode>('smart');
+  const [authChecking, setAuthChecking] = useState(true);
 
   // Sidebar State
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -33,76 +44,168 @@ const App: React.FC = () => {
     scrollToBottom();
   }, [sessions, currentSessionId, isLoading]);
 
-  // --- Logic ---
+  // Auto-login on mount if token exists
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const userData = await getMe();
+        if (userData) {
+          setUser(userData);
+          await loadSessions(userData);
+        }
+      } catch {
+        // No valid token
+      } finally {
+        setAuthChecking(false);
+      }
+    };
+    checkAuth();
+  }, []);
 
-  const handleLogin = (username: string) => {
-    setUser({ username });
-    if (sessions.length === 0) {
-      createNewSession();
+  // --- Data loading ---
+
+  const loadSessions = async (_user?: User | null) => {
+    try {
+      const apiSessions = await fetchSessions();
+      const localSessions: ChatSession[] = apiSessions.map(s => ({
+        id: s.id,
+        title: s.title,
+        messages: [],
+        createdAt: new Date(s.created_at),
+        mode: s.mode as ChatMode,
+      }));
+      setSessions(localSessions);
+      if (localSessions.length > 0) {
+        const lastSession = localSessions[localSessions.length - 1];
+        setCurrentSessionId(lastSession.id);
+        setChatMode(lastSession.mode || 'smart');
+        await loadMessages(lastSession.id, localSessions);
+      } else {
+        // Auto-create first session for new users
+        await createNewSession();
+      }
+    } catch (err) {
+      console.error('Failed to load sessions:', err);
     }
   };
 
+  const loadMessages = async (sessionId: string, currentSessions?: ChatSession[]) => {
+    try {
+      const apiMessages = await fetchMessages(sessionId);
+      const msgs: Message[] = apiMessages.map(m => ({
+        id: m.id,
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        timestamp: new Date(m.created_at),
+        routeType: m.route_type || undefined,
+      }));
+
+      const updateFn = (prev: ChatSession[]) =>
+        prev.map(s => s.id === sessionId ? { ...s, messages: msgs } : s);
+
+      if (currentSessions) {
+        setSessions(updateFn(currentSessions));
+      } else {
+        setSessions(prev => updateFn(prev));
+      }
+    } catch (err) {
+      console.error('Failed to load messages:', err);
+    }
+  };
+
+  // --- Logic ---
+
+  const handleLogin = async (userData: { id: number; username: string }, _token: string) => {
+    const u: User = { id: userData.id, username: userData.username, created_at: '' };
+    setUser(u);
+    await loadSessions(u);
+  };
+
   const handleLogout = () => {
+    clearToken();
     setUser(null);
     setSessions([]);
     setCurrentSessionId(null);
   };
 
-  const createNewSession = (overrideMode?: ChatMode) => {
+  const createNewSession = async (overrideMode?: ChatMode) => {
     const mode = overrideMode || chatMode;
-    const welcomeMessages: Record<ChatMode, string> = {
-      smart: 'Xin chào! Hãy hỏi bất kỳ câu hỏi nào về Sở hữu trí tuệ — tôi sẽ tự động tìm nguồn phù hợp nhất (luật, bản án, hoặc cả hai).',
-      verdict: 'Xin chào! Tôi có thể phân tích tình huống pháp lý dựa trên các bản án thực tế về Sở hữu trí tuệ. Hãy mô tả tình huống của bạn!',
-      legal: 'Xin chào! Tôi có thể giúp gì cho bạn về các quy định pháp luật?',
-    };
-    const newSession: ChatSession = {
-      id: Date.now().toString(),
-      title: 'Đoạn chat mới',
-      messages: [{
-        id: 'welcome',
-        role: 'assistant',
-        content: welcomeMessages[mode],
-        timestamp: new Date()
-      }],
-      createdAt: new Date(),
-      mode: mode
-    };
-    setSessions(prev => [...prev, newSession]);
-    setCurrentSessionId(newSession.id);
-    setIsMobileSidebarOpen(false);
+    try {
+      const apiSession = await createSessionApi('Đoạn chat mới', mode);
+      const welcomeMessages: Record<ChatMode, string> = {
+        smart: 'Xin chào! Hãy hỏi bất kỳ câu hỏi nào về Sở hữu trí tuệ — tôi sẽ tự động tìm nguồn phù hợp nhất (luật, bản án, hoặc cả hai).',
+        verdict: 'Xin chào! Tôi có thể phân tích tình huống pháp lý dựa trên các bản án thực tế về Sở hữu trí tuệ. Hãy mô tả tình huống của bạn!',
+        legal: 'Xin chào! Tôi có thể giúp gì cho bạn về các quy định pháp luật?',
+      };
+
+      // Save welcome message to backend
+      await saveMessage(apiSession.id, 'assistant', welcomeMessages[mode]);
+
+      const newSession: ChatSession = {
+        id: apiSession.id,
+        title: 'Đoạn chat mới',
+        messages: [{
+          id: 'welcome-' + apiSession.id,
+          role: 'assistant',
+          content: welcomeMessages[mode],
+          timestamp: new Date()
+        }],
+        createdAt: new Date(apiSession.created_at),
+        mode: mode
+      };
+      setSessions(prev => [...prev, newSession]);
+      setCurrentSessionId(newSession.id);
+      setIsMobileSidebarOpen(false);
+    } catch (err) {
+      console.error('Failed to create session:', err);
+    }
   };
 
-  const handleSelectSession = (id: string) => {
+  const handleSelectSession = async (id: string) => {
     setCurrentSessionId(id);
-    // Switch mode to match the selected session's mode
     const session = sessions.find(s => s.id === id);
     if (session?.mode) {
       setChatMode(session.mode);
     }
     setIsMobileSidebarOpen(false);
+
+    // Load messages if not already loaded
+    if (session && session.messages.length === 0) {
+      await loadMessages(id);
+    }
   };
 
-  const handleRenameSession = (id: string, newTitle: string) => {
-    setSessions(prev => prev.map(session =>
-      session.id === id ? { ...session, title: newTitle } : session
-    ));
+  const handleRenameSession = async (id: string, newTitle: string) => {
+    try {
+      await renameSessionApi(id, newTitle);
+      setSessions(prev => prev.map(session =>
+        session.id === id ? { ...session, title: newTitle } : session
+      ));
+    } catch (err) {
+      console.error('Failed to rename session:', err);
+    }
   };
 
-  const handleDeleteSession = (id: string) => {
+  const handleDeleteSession = async (id: string) => {
     if (!window.confirm('Bạn có chắc chắn muốn xóa cuộc trò chuyện này không?')) return;
 
-    const updatedSessions = sessions.filter(s => s.id !== id);
+    try {
+      await deleteSessionApi(id);
+      const updatedSessions = sessions.filter(s => s.id !== id);
 
-    if (updatedSessions.length === 0) {
-      createNewSession();
-      return;
-    } else {
-      setSessions(updatedSessions);
-      // If the deleted session was active, switch to another one
-      if (currentSessionId === id) {
-        // Switch to the last session in the remaining list
-        setCurrentSessionId(updatedSessions[updatedSessions.length - 1].id);
+      if (updatedSessions.length === 0) {
+        setSessions([]);
+        setCurrentSessionId(null);
+        await createNewSession();
+        return;
+      } else {
+        setSessions(updatedSessions);
+        if (currentSessionId === id) {
+          setCurrentSessionId(updatedSessions[updatedSessions.length - 1].id);
+        }
       }
+    } catch (err) {
+      console.error('Failed to delete session:', err);
     }
   };
 
@@ -115,7 +218,6 @@ const App: React.FC = () => {
     setSessions(prevSessions => prevSessions.map(session => {
       if (session.id === currentSessionId) {
         let newTitle = session.title;
-        // Auto rename on first user message
         if (session.title === 'Đoạn chat mới' && newMessage.role === 'user') {
           newTitle = newMessage.content.slice(0, 30) + (newMessage.content.length > 30 ? '...' : '');
         }
@@ -130,7 +232,6 @@ const App: React.FC = () => {
     }));
   };
 
-  // Update a specific message's content (for streaming)
   const updateMessageContent = (messageId: string, content: string) => {
     setSessions(prevSessions => prevSessions.map(session => {
       if (session.id === currentSessionId) {
@@ -145,7 +246,6 @@ const App: React.FC = () => {
     }));
   };
 
-  // Update a specific message's routeType (for smart router)
   const updateMessageRouteType = (messageId: string, routeType: string) => {
     setSessions(prevSessions => prevSessions.map(session => {
       if (session.id === currentSessionId) {
@@ -173,7 +273,20 @@ const App: React.FC = () => {
     updateCurrentSessionMessages(userMessage);
     setIsLoading(true);
 
-    // Create bot message with empty content first
+    // Save user message to DB
+    try {
+      await saveMessage(currentSessionId, 'user', text);
+    } catch (err) {
+      console.error('Failed to save user message:', err);
+    }
+
+    // Auto-rename on first user message
+    const currentSess = sessions.find(s => s.id === currentSessionId);
+    if (currentSess && currentSess.title === 'Đoạn chat mới') {
+      const newTitle = text.slice(0, 30) + (text.length > 30 ? '...' : '');
+      renameSessionApi(currentSessionId, newTitle).catch(console.error);
+    }
+
     const botMessageId = (Date.now() + 1).toString();
     const botMessage: Message = {
       id: botMessageId,
@@ -183,32 +296,38 @@ const App: React.FC = () => {
     };
     updateCurrentSessionMessages(botMessage);
 
+    let botRouteType: string | undefined;
+
     try {
-      const sessionMode = currentSession?.mode || chatMode;
+      const sessionMode = currentSess?.mode || chatMode;
       await sendQueryToBackendStream(
         text,
-        // onChunk: update message content as chunks arrive
         (_chunk, fullText) => {
           updateMessageContent(botMessageId, fullText);
         },
-        // onComplete: streaming finished
-        () => {
+        (fullText) => {
           setIsLoading(false);
+          // Save bot reply to DB
+          if (currentSessionId && fullText) {
+            saveMessage(currentSessionId, 'assistant', fullText, botRouteType).catch(console.error);
+          }
         },
-        // onError: handle errors
         (error) => {
-          updateMessageContent(botMessageId, 'Xin lỗi, tôi không thể kết nối đến máy chủ (Port 1605).');
+          const errMsg = 'Xin lỗi, tôi không thể kết nối đến máy chủ (Port 1605).';
+          updateMessageContent(botMessageId, errMsg);
           console.error('Stream error:', error);
           setIsLoading(false);
+          if (currentSessionId) {
+            saveMessage(currentSessionId, 'assistant', errMsg).catch(console.error);
+          }
         },
         sessionMode,
-        // onRoute: smart router tells us which source was used
         (route) => {
+          botRouteType = route;
           updateMessageRouteType(botMessageId, route);
         }
       );
     } catch (error) {
-      // Error already handled by onError callback
       setIsLoading(false);
     }
   };
@@ -218,6 +337,17 @@ const App: React.FC = () => {
   const currentMessages = currentSession ? currentSession.messages : [];
 
   // --- Render ---
+
+  if (authChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-white">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-3 border-black border-t-transparent rounded-full animate-spin" />
+          <p className="text-gray-400 text-sm">Đang kiểm tra phiên đăng nhập...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return <LoginPage onLogin={handleLogin} />;
@@ -285,11 +415,9 @@ const App: React.FC = () => {
           <div className="flex items-center gap-4">
             <ModeSelector mode={chatMode} onModeChange={(mode) => {
               setChatMode(mode);
-              // If current session is still empty (only welcome msg), reuse it
               const isCurrentEmpty = currentSession &&
                 currentSession.title === 'Đoạn chat mới' &&
-                currentSession.messages.length === 1 &&
-                currentSession.messages[0].id === 'welcome';
+                currentSession.messages.length <= 1;
               if (isCurrentEmpty && currentSession) {
                 const welcomeMessages: Record<ChatMode, string> = {
                   smart: 'Xin chào! Hãy hỏi bất kỳ câu hỏi nào về Sở hữu trí tuệ — tôi sẽ tự động tìm nguồn phù hợp nhất (luật, bản án, hoặc cả hai).',

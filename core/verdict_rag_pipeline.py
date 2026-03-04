@@ -8,7 +8,8 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 sys.path.insert(0, str(PROJECT_ROOT))
 from utils.verdict_neo4j_retriever import Neo4jVerdictRetriever, RetrievedVerdictChunk
@@ -127,10 +128,9 @@ class VerdictRAGPipeline:
         if not api_key:
             raise ValueError("GEMINI_API_KEY not found in .env")
 
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(
-            model_name=model_name, system_instruction=SYSTEM_PROMPT
-        )
+        self.client = genai.Client(api_key=api_key)
+        self.model_name = model_name
+        self.system_instruction = SYSTEM_PROMPT
         self.retriever = Neo4jVerdictRetriever(embedding_model_path=embedding_model_path)
         self.top_k = top_k
         self._initialized = True
@@ -215,7 +215,14 @@ class VerdictRAGPipeline:
             context=self._format_context(results),
             case_list=self._case_list(results),
         )
-        answer = self.model.generate_content(prompt).text
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=self.system_instruction,
+            )
+        )
+        answer = response.text
         return VerdictRAGResponse(
             answer=answer,
             sources=self._extract_sources(results),
@@ -223,8 +230,12 @@ class VerdictRAGPipeline:
             retrieved_chunks=len(results),
         )
 
-    def query_stream(self, query, top_k=None, ip_types=None, trial_level=None):
-        results = self._retrieve(query, top_k, ip_types, trial_level)
+    async def query_stream(self, query, top_k=None, ip_types=None, trial_level=None):
+        import asyncio
+        
+        results = await asyncio.to_thread(
+            self._retrieve, query, top_k, ip_types, trial_level
+        )
         if not results:
             yield NO_RESULT_MSG
             return
@@ -234,7 +245,14 @@ class VerdictRAGPipeline:
             context=self._format_context(results),
             case_list=self._case_list(results),
         )
-        for chunk in self.model.generate_content(prompt, stream=True):
+        response = await self.client.aio.models.generate_content_stream(
+            model=self.model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=self.system_instruction,
+            )
+        )
+        async for chunk in response:
             if chunk.text:
                 yield chunk.text
 

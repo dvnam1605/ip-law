@@ -19,14 +19,39 @@ export interface ChatSession {
 }
 
 export interface User {
+    id: number;
     username: string;
-    avatar?: string;
+    created_at: string;
+}
+
+export interface AuthResponse {
+    access_token: string;
+    token_type: string;
+    user: User;
 }
 
 export interface ChatState {
   sessions: ChatSession[];
   currentSessionId: string | null;
   isLoading: boolean;
+}
+
+// Backend session (from API)
+export interface ApiSession {
+  id: string;
+  title: string;
+  mode: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Backend message (from API)
+export interface ApiMessage {
+  id: string;
+  role: string;
+  content: string;
+  route_type: string | null;
+  created_at: string;
 }
 
 // Request payload expected by the backend

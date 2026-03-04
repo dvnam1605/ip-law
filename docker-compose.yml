@@ -18,6 +18,33 @@ services:
       - neo4j_logs:/logs
     restart: unless-stopped
 
+  postgres:
+    image: postgres:16
+    container_name: postgres_legal_rag
+    ports:
+      - "1607:5432"
+    environment:
+      - POSTGRES_USER=dvnam
+      - POSTGRES_PASSWORD=dvnam1605
+      - POSTGRES_DB=legal_rag
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin_legal_rag
+    ports:
+      - "1608:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@legalrag.com
+      - PGADMIN_DEFAULT_PASSWORD=admin123
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
 volumes:
   neo4j_data:
   neo4j_logs:
+  postgres_data:

@@ -8,7 +8,8 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 import sys
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -89,11 +90,9 @@ class GeminiRAGPipeline:
         if not api_key:
             raise ValueError("GEMINI_API_KEY not found. Set it in .env file.")
         
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=SYSTEM_PROMPT
-        )
+        self.client = genai.Client(api_key=api_key)
+        self.model_name = model_name
+        self.system_instruction = SYSTEM_PROMPT
         
         # Initialize retriever - use absolute path
         self.retriever = Neo4jLegalRetriever(
@@ -173,7 +172,13 @@ class GeminiRAGPipeline:
         context = self._format_context(results)
         user_prompt = USER_PROMPT_TEMPLATE.format(query=query, context=context)
         
-        response = self.model.generate_content(user_prompt)
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=self.system_instruction,
+            )
+        )
         answer = response.text
         
         return RAGResponse(
@@ -183,18 +188,19 @@ class GeminiRAGPipeline:
             retrieved_chunks=len(results)
         )
     
-    def query_stream(
+    async def query_stream(
         self,
         query: str,
         top_k: int = None,
         query_date: str = None,
         doc_types: List[str] = None,
     ):
-        from typing import Generator
+        import asyncio
         
         k = top_k or self.top_k
         
-        results = self.retriever.search(
+        results = await asyncio.to_thread(
+            self.retriever.search,
             query=query,
             top_k=k,
             query_date=query_date,
@@ -210,9 +216,14 @@ class GeminiRAGPipeline:
         context = self._format_context(results)
         user_prompt = USER_PROMPT_TEMPLATE.format(query=query, context=context)
         
-        response = self.model.generate_content(user_prompt, stream=True)
-        
-        for chunk in response:
+        response = await self.client.aio.models.generate_content_stream(
+            model=self.model_name,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=self.system_instruction,
+            )
+        )
+        async for chunk in response:
             if chunk.text:
                 yield chunk.text
     

@@ -9,7 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 PROJECT_ROOT = Path(__file__).parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -122,25 +123,29 @@ class SmartRouter:
 
         api_key = os.getenv("GEMINI_API_KEY")
         model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-        genai.configure(api_key=api_key)
-        self.combined_model = genai.GenerativeModel(
-            model_name=model_name, system_instruction=COMBINED_SYSTEM_PROMPT
-        )
+        self.client = genai.Client(api_key=api_key)
+        self.combined_model_name = model_name
+        self.combined_system_instruction = COMBINED_SYSTEM_PROMPT
         self._initialized = True
         print("✅ Smart Router ready")
 
-    def route_and_stream(self, query: str):
+    async def route_and_stream(self, query: str):
         route = classify_query(query)
         yield f"__ROUTE__{route}__"
 
         if route == 'legal':
-            yield from self.legal_pipeline.query_stream(query=query)
+            async for chunk in self.legal_pipeline.query_stream(query=query):
+                yield chunk
         elif route == 'verdict':
-            yield from self.verdict_pipeline.query_stream(query=query)
+            async for chunk in self.verdict_pipeline.query_stream(query=query):
+                yield chunk
         else:
-            yield from self._combined_stream(query)
+            async for chunk in self._combined_stream(query):
+                yield chunk
 
-    def _combined_stream(self, query: str):
+    async def _combined_stream(self, query: str):
+        import asyncio
+        
         legal_ctx = None
         verdict_ctx = None
         verdict_results = None
@@ -160,10 +165,10 @@ class SmartRouter:
                 verdict_results = results
                 verdict_ctx = self.verdict_pipeline._format_context(results)
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            executor.submit(fetch_legal)
-            executor.submit(fetch_verdict)
-            executor.shutdown(wait=True)
+        await asyncio.gather(
+            asyncio.to_thread(fetch_legal),
+            asyncio.to_thread(fetch_verdict),
+        )
 
         if not legal_ctx and not verdict_ctx:
             yield "Xin lỗi, tôi không tìm thấy dữ liệu liên quan trong cơ sở dữ liệu."
@@ -186,7 +191,14 @@ CÂU HỎI: {query}
 NHẮC LẠI: CHỈ trích dẫn điều luật và bản án có trong dữ liệu trên. KHÔNG nhắc đến bất kỳ nguồn nào khác.
 Hãy tư vấn toàn diện, kết hợp cả quy định pháp luật lẫn thực tiễn xét xử.
 """
-        for chunk in self.combined_model.generate_content(prompt, stream=True):
+        response = await self.client.aio.models.generate_content_stream(
+            model=self.combined_model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=self.combined_system_instruction,
+            )
+        )
+        async for chunk in response:
             if chunk.text:
                 yield chunk.text
 
