@@ -5,6 +5,7 @@ const API_BASE = `http://${window.location.hostname}:1605`;
 const STREAM_API_URL = `${API_BASE}/api/query/stream`;
 const VERDICT_STREAM_API_URL = `${API_BASE}/api/verdict/query/stream`;
 const SMART_STREAM_API_URL = `${API_BASE}/api/smart/query/stream`;
+const TRADEMARK_STREAM_API_URL = `${API_BASE}/api/trademark/analyze/stream`;
 
 // ── Global 401 handler ──────────────────────────────
 
@@ -240,6 +241,8 @@ export const sendQueryToBackendStream = async (
       url = SMART_STREAM_API_URL;
     } else if (mode === 'verdict') {
       url = VERDICT_STREAM_API_URL;
+    } else if (mode === 'trademark') {
+      url = TRADEMARK_STREAM_API_URL;
     } else {
       url = STREAM_API_URL;
     }
@@ -290,7 +293,7 @@ export const sendQueryToBackendStream = async (
 
           const chunk = unescapeSSE(data);
 
-          const routeMatch = chunk.trim().match(/^__ROUTE__(legal|verdict|combined)__$/);
+          const routeMatch = chunk.trim().match(/^__ROUTE__(legal|verdict|combined|trademark)__$/);
           if (routeMatch) {
             onRoute?.(routeMatch[1]);
             continue;

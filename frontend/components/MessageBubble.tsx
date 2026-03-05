@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { Message } from '../types';
-import { User, Bot, AlertCircle, Copy, BookOpen, Scale, Layers } from 'lucide-react';
+import { User, Bot, AlertCircle, Copy, BookOpen, Scale, Layers, Search } from 'lucide-react';
 
 interface MessageBubbleProps {
   message: Message;
@@ -157,6 +157,7 @@ const routeLabels: Record<string, { label: string; icon: React.ReactNode; color:
   legal: { label: 'Văn bản pháp luật', icon: <BookOpen className="w-3 h-3" />, color: 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 border-blue-100 dark:border-blue-800' },
   verdict: { label: 'Bản án', icon: <Scale className="w-3 h-3" />, color: 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 border-amber-100 dark:border-amber-800' },
   combined: { label: 'Tổng hợp', icon: <Layers className="w-3 h-3" />, color: 'bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 border-purple-100 dark:border-purple-800' },
+  trademark: { label: 'Tra cứu nhãn hiệu', icon: <Search className="w-3 h-3" />, color: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-emerald-800' },
 };
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {

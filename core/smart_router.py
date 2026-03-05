@@ -15,7 +15,7 @@ from google.genai import types
 sys.path.insert(0, str(PROJECT_ROOT))
 from core.rag_pipeline import format_history
 
-RouteType = Literal['legal', 'verdict', 'combined']
+RouteType = Literal['legal', 'verdict', 'combined', 'trademark']
 
 VERDICT_KEYWORDS = [
     r'tình huống', r'bồi thường', r'khởi kiện', r'kiện', r'phản tố',
@@ -38,6 +38,18 @@ LEGAL_KEYWORDS = [
     r'(?:mức|hình thức).*xử phạt', r'phân biệt.*(?:giữa|và)',
 ]
 
+TRADEMARK_KEYWORDS = [
+    r'tra\s*cứu.*nhãn\s*hiệu', r'nhãn\s*hiệu.*đã\s*đăng\s*ký',
+    r'nhãn\s*hiệu.*tương\s*tự', r'xung\s*đột.*nhãn\s*hiệu',
+    r'đăng\s*ký.*nhãn\s*hiệu.*(?:chưa|được\s*không|có\s*thể)',
+    r'kiểm\s*tra.*nhãn\s*hiệu', r'trademark',
+    r'tên\s*thương\s*(?:mại|hiệu).*(?:trùng|giống|tương\s*tự)',
+    r'brand.*(?:search|lookup|check)',
+    r'nhãn\s*hiệu.*(?:trùng|giống|xem|check|có\s*ai)',
+    r'logo.*(?:đã\s*đăng\s*ký|trùng|giống)',
+    r'thương\s*hiệu.*(?:đã\s*có|đã\s*đăng|trùng|xung\s*đột)',
+]
+
 # Patterns that signal user wants practical advice (situation + "what should I do?")
 # These questions inherently need BOTH legal framework + case-law reference → combined
 ADVISORY_PATTERNS = [
@@ -56,7 +68,14 @@ def classify_query(query: str) -> RouteType:
     q = query.lower()
     verdict_score = sum(1 for p in VERDICT_KEYWORDS if re.search(p, q))
     legal_score = sum(1 for p in LEGAL_KEYWORDS if re.search(p, q))
+    trademark_score = sum(1 for p in TRADEMARK_KEYWORDS if re.search(p, q))
     advisory_hit = any(re.search(p, q) for p in ADVISORY_PATTERNS)
+
+    # Trademark intent takes priority when strong signal
+    if trademark_score >= 2:
+        return 'trademark'
+    if trademark_score >= 1 and verdict_score == 0 and legal_score <= 1:
+        return 'trademark'
 
     # Advisory intent (situation + asking what to do) → always combined
     if advisory_hit and verdict_score >= 1:
@@ -118,9 +137,11 @@ class SmartRouter:
             return
         from core.rag_pipeline import get_pipeline
         from core.verdict_rag_pipeline import get_verdict_pipeline
+        from core.trademark_pipeline import get_trademark_pipeline
 
         self.legal_pipeline = get_pipeline()
         self.verdict_pipeline = get_verdict_pipeline()
+        self.trademark_pipeline = get_trademark_pipeline()
 
         api_key = os.getenv("GEMINI_API_KEY")
         model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -139,6 +160,9 @@ class SmartRouter:
                 yield chunk
         elif route == 'verdict':
             async for chunk in self.verdict_pipeline.query_stream(query=query, history=history):
+                yield chunk
+        elif route == 'trademark':
+            async for chunk in self.trademark_pipeline.analyze_stream(query=query, history=history):
                 yield chunk
         else:
             async for chunk in self._combined_stream(query, history=history):

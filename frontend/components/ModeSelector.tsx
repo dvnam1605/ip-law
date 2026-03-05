@@ -1,6 +1,6 @@
 import React from 'react';
 import { ChatMode } from '../types';
-import { BookOpen, Scale, Sparkles } from 'lucide-react';
+import { BookOpen, Scale, Sparkles, Search } from 'lucide-react';
 
 interface ModeSelectorProps {
   mode: ChatMode;
@@ -11,6 +11,7 @@ const modes: { key: ChatMode; label: string; icon: React.ReactNode }[] = [
   { key: 'smart', label: 'Tự động', icon: <Sparkles className="w-4 h-4" /> },
   { key: 'legal', label: 'Văn bản pháp luật', icon: <BookOpen className="w-4 h-4" /> },
   { key: 'verdict', label: 'Bản án', icon: <Scale className="w-4 h-4" /> },
+  { key: 'trademark', label: 'Nhãn hiệu', icon: <Search className="w-4 h-4" /> },
 ];
 
 const ModeSelector: React.FC<ModeSelectorProps> = ({ mode, onModeChange }) => {

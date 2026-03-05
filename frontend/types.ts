@@ -1,5 +1,5 @@
 export type Role = 'user' | 'assistant';
-export type ChatMode = 'legal' | 'verdict' | 'smart';
+export type ChatMode = 'legal' | 'verdict' | 'smart' | 'trademark';
 
 export interface Message {
   id: string;
@@ -67,4 +67,27 @@ export interface QueryResponse {
   result?: string;
   text?: string;
   [key: string]: any;
+}
+
+// Trademark types
+export interface TrademarkResult {
+  brand_name: string;
+  owner_name: string;
+  owner_country: string;
+  registration_number: string;
+  nice_classes: string[];
+  ipr_type: string;
+  country_of_filing: string;
+  status: string;
+  status_date: string;
+  similarity_score: number;
+  match_type: string;
+}
+
+export interface TrademarkSearchResponse {
+  success: boolean;
+  query: string;
+  results: TrademarkResult[];
+  total_found: number;
+  processing_time_ms: number;
 }

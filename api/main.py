@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from core.rag_pipeline import get_pipeline, RAGResponse
 from core.verdict_rag_pipeline import get_verdict_pipeline, VerdictRAGResponse
 from core.smart_router import get_smart_router
+from core.trademark_pipeline import get_trademark_pipeline
 
 from db.database import get_db, init_db, async_session_factory
 from db.models import User, ChatSession, Message
@@ -28,6 +29,8 @@ from db.schemas import (
     UsernameChange, PasswordChange,
     SessionCreate, SessionRename, SessionRead,
     MessageCreate, MessageRead, SessionWithMessages,
+    TrademarkSearchRequest, TrademarkResult, TrademarkSearchResponse,
+    TrademarkAnalyzeRequest,
 )
 from db.auth import (
     hash_password, verify_password, create_access_token, get_current_user,
@@ -152,6 +155,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"❌ Failed to initialize Verdict RAG Pipeline: {e}")
 
+    try:
+        trademark_pipeline = get_trademark_pipeline()
+        print("✅ Trademark Pipeline initialized successfully")
+    except Exception as e:
+        print(f"❌ Failed to initialize Trademark Pipeline: {e}")
+
     # Background task: cleanup expired blacklisted tokens every 6 hours
     async def token_cleanup_loop():
         while True:
@@ -184,6 +193,11 @@ async def lifespan(app: FastAPI):
     try:
         verdict_pipeline = get_verdict_pipeline()
         verdict_pipeline.close()
+    except:
+        pass
+    try:
+        trademark_pipeline = get_trademark_pipeline()
+        trademark_pipeline.close()
     except:
         pass
 
@@ -654,6 +668,86 @@ async def smart_query_stream(request: SmartQueryRequest):
         try:
             router = get_smart_router()
             async for chunk in router.route_and_stream(query=request.query, history=history):
+                escaped = chunk.replace('\\', '\\\\').replace('\n', '\\n')
+                yield f"data: {escaped}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: [ERROR]{str(e)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+# ═══════════════════════════════════════════════════════
+#  Trademark endpoints
+# ═══════════════════════════════════════════════════════
+
+@app.post("/api/trademark/search", response_model=TrademarkSearchResponse)
+async def trademark_search(request: TrademarkSearchRequest):
+    start_time = datetime.now()
+    try:
+        pipeline = get_trademark_pipeline()
+        matches = pipeline.search(
+            brand_name=request.brand_name,
+            nice_classes=request.nice_classes,
+            limit=request.limit,
+        )
+        processing_time = (datetime.now() - start_time).total_seconds() * 1000
+
+        results = [
+            TrademarkResult(
+                brand_name=m.brand_name,
+                owner_name=m.owner_name,
+                owner_country=m.owner_country,
+                registration_number=m.registration_number,
+                nice_classes=m.nice_classes,
+                ipr_type=m.ipr_type,
+                country_of_filing=m.country_of_filing,
+                status=m.status,
+                status_date=m.status_date,
+                similarity_score=m.similarity_score,
+                match_type=m.match_type,
+            )
+            for m in matches
+        ]
+
+        return TrademarkSearchResponse(
+            success=True,
+            query=request.brand_name,
+            results=results,
+            total_found=len(results),
+            processing_time_ms=round(processing_time, 2),
+        )
+    except Exception as e:
+        processing_time = (datetime.now() - start_time).total_seconds() * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={"error": str(e), "processing_time_ms": round(processing_time, 2)}
+        )
+
+
+@app.post("/api/trademark/analyze/stream")
+async def trademark_analyze_stream(request: TrademarkAnalyzeRequest):
+    from fastapi.responses import StreamingResponse
+
+    history = await _load_history(request.session_id)
+
+    async def generate():
+        try:
+            pipeline = get_trademark_pipeline()
+            yield f"data: __ROUTE__trademark__\n\n"
+            async for chunk in pipeline.analyze_stream(
+                query=request.query,
+                nice_classes=request.nice_classes,
+                history=history,
+            ):
                 escaped = chunk.replace('\\', '\\\\').replace('\n', '\\n')
                 yield f"data: {escaped}\n\n"
             yield "data: [DONE]\n\n"

@@ -166,6 +166,7 @@ const App: React.FC = () => {
         smart: 'Xin chào! Hãy hỏi bất kỳ câu hỏi nào về Sở hữu trí tuệ — tôi sẽ tự động tìm nguồn phù hợp nhất (luật, bản án, hoặc cả hai).',
         verdict: 'Xin chào! Tôi có thể phân tích tình huống pháp lý dựa trên các bản án thực tế về Sở hữu trí tuệ. Hãy mô tả tình huống của bạn!',
         legal: 'Xin chào! Tôi có thể giúp gì cho bạn về các quy định pháp luật?',
+        trademark: 'Xin chào! Tôi có thể tra cứu nhãn hiệu đã đăng ký và phân tích xung đột. Hãy nhập tên nhãn hiệu bạn muốn kiểm tra!',
       };
 
       // Save welcome message to backend
@@ -359,6 +360,8 @@ const App: React.FC = () => {
         currentSessionId || undefined,
       );
     } catch (error) {
+      // handled by onError callback
+    } finally {
       setIsLoading(false);
     }
   };
@@ -467,6 +470,7 @@ const App: React.FC = () => {
                     smart: 'Xin chào! Hãy hỏi bất kỳ câu hỏi nào về Sở hữu trí tuệ — tôi sẽ tự động tìm nguồn phù hợp nhất (luật, bản án, hoặc cả hai).',
                     verdict: 'Xin chào! Tôi có thể phân tích tình huống pháp lý dựa trên các bản án thực tế về Sở hữu trí tuệ. Hãy mô tả tình huống của bạn!',
                     legal: 'Xin chào! Tôi có thể giúp gì cho bạn về các quy định pháp luật?',
+                    trademark: 'Xin chào! Tôi có thể tra cứu nhãn hiệu đã đăng ký và phân tích xung đột. Hãy nhập tên nhãn hiệu bạn muốn kiểm tra!',
                   };
                   setSessions(prev => prev.map(s =>
                     s.id === currentSession.id

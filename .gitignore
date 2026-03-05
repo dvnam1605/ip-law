@@ -94,3 +94,4 @@ docker-compose.override.yml
 *.key
 secrets/
 .agents
+data/

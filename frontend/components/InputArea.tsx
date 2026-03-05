@@ -12,7 +12,7 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled }) => {
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!input.trim() || input.trim().length < 5 || disabled) return;
+    if (!input.trim() || input.trim().length < 2 || disabled) return;
     onSend(input.trim());
     setInput('');
     if (textareaRef.current) {
