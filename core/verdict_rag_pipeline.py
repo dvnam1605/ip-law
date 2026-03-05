@@ -13,6 +13,7 @@ from google.genai import types
 
 sys.path.insert(0, str(PROJECT_ROOT))
 from utils.verdict_neo4j_retriever import Neo4jVerdictRetriever, RetrievedVerdictChunk
+from core.rag_pipeline import format_history
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -230,7 +231,7 @@ class VerdictRAGPipeline:
             retrieved_chunks=len(results),
         )
 
-    async def query_stream(self, query, top_k=None, ip_types=None, trial_level=None):
+    async def query_stream(self, query, top_k=None, ip_types=None, trial_level=None, history=None):
         import asyncio
         
         results = await asyncio.to_thread(
@@ -240,11 +241,8 @@ class VerdictRAGPipeline:
             yield NO_RESULT_MSG
             return
 
-        prompt = USER_PROMPT_TEMPLATE.format(
-            query=query,
-            context=self._format_context(results),
-            case_list=self._case_list(results),
-        )
+        history_text = format_history(history) if history else ""
+        prompt = f"{history_text}\n{USER_PROMPT_TEMPLATE.format(query=query, context=self._format_context(results), case_list=self._case_list(results))}"
         response = await self.client.aio.models.generate_content_stream(
             model=self.model_name,
             contents=prompt,

@@ -37,6 +37,23 @@ class UserRead(BaseModel):
         from_attributes = True
 
 
+
+class UsernameChange(BaseModel):
+    new_username: str = Field(..., min_length=3, max_length=100)
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=6, max_length=128)
+    confirm_password: str = Field(..., min_length=6, max_length=128)
+
+    @model_validator(mode="after")
+    def passwords_match(self):
+        if self.new_password != self.confirm_password:
+            raise ValueError("Mật khẩu xác nhận không khớp")
+        return self
+
+
 # ── Chat Sessions ────────────────────────────────────
 
 class SessionCreate(BaseModel):

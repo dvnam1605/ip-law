@@ -6,6 +6,19 @@ const STREAM_API_URL = `${API_BASE}/api/query/stream`;
 const VERDICT_STREAM_API_URL = `${API_BASE}/api/verdict/query/stream`;
 const SMART_STREAM_API_URL = `${API_BASE}/api/smart/query/stream`;
 
+// ── Global 401 handler ──────────────────────────────
+
+let _onUnauthorized: (() => void) | null = null;
+
+export function setOnUnauthorized(callback: () => void): void {
+  _onUnauthorized = callback;
+}
+
+function handleUnauthorized(): void {
+  clearToken();
+  _onUnauthorized?.();
+}
+
 // ── Token management ────────────────────────────────
 
 function getToken(): string | null {
@@ -76,6 +89,10 @@ export const getMe = async (): Promise<AuthResponse['user'] | null> => {
       headers: { 'Authorization': `Bearer ${token}` },
     });
 
+    if (response.status === 401) {
+      handleUnauthorized();
+      return null;
+    }
     if (!response.ok) {
       clearToken();
       return null;
@@ -87,12 +104,63 @@ export const getMe = async (): Promise<AuthResponse['user'] | null> => {
   }
 };
 
+export const logoutUser = async (): Promise<void> => {
+  const token = getToken();
+  if (token) {
+    try {
+      await fetch(`${API_BASE}/api/auth/logout`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+    } catch {
+      // Ignore errors, still clear token locally
+    }
+  }
+  clearToken();
+};
+
+export const changeUsername = async (newUsername: string): Promise<{ username: string }> => {
+  const response = await fetch(`${API_BASE}/api/auth/username`, {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: JSON.stringify({ new_username: newUsername }),
+  });
+  if (response.status === 401) { handleUnauthorized(); throw new Error('Unauthorized'); }
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.detail || 'Không thể đổi tên đăng nhập');
+  }
+  return response.json();
+};
+
+export const changePassword = async (
+  currentPassword: string,
+  newPassword: string,
+  confirmPassword: string,
+): Promise<void> => {
+  const response = await fetch(`${API_BASE}/api/auth/password`, {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+      confirm_password: confirmPassword,
+    }),
+  });
+  if (response.status === 401) { handleUnauthorized(); throw new Error('Unauthorized'); }
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.detail || 'Không thể đổi mật khẩu');
+  }
+};
+
 // ── Session APIs ────────────────────────────────────
 
 export const fetchSessions = async (): Promise<ApiSession[]> => {
   const response = await fetch(`${API_BASE}/api/sessions`, {
     headers: authHeaders(),
   });
+  if (response.status === 401) { handleUnauthorized(); throw new Error('Unauthorized'); }
   if (!response.ok) throw new Error('Không thể tải sessions');
   return response.json();
 };
@@ -163,9 +231,10 @@ export const sendQueryToBackendStream = async (
   onError?: (error: Error) => void,
   mode: ChatMode = 'legal',
   onRoute?: (route: string) => void,
+  sessionId?: string,
 ): Promise<void> => {
   try {
-    const payload: QueryRequest = { query };
+    const payload: QueryRequest = { query, session_id: sessionId };
     let url: string;
     if (mode === 'smart') {
       url = SMART_STREAM_API_URL;

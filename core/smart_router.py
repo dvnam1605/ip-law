@@ -13,6 +13,7 @@ from google import genai
 from google.genai import types
 
 sys.path.insert(0, str(PROJECT_ROOT))
+from core.rag_pipeline import format_history
 
 RouteType = Literal['legal', 'verdict', 'combined']
 
@@ -129,21 +130,21 @@ class SmartRouter:
         self._initialized = True
         print("✅ Smart Router ready")
 
-    async def route_and_stream(self, query: str):
+    async def route_and_stream(self, query: str, history: list = None):
         route = classify_query(query)
         yield f"__ROUTE__{route}__"
 
         if route == 'legal':
-            async for chunk in self.legal_pipeline.query_stream(query=query):
+            async for chunk in self.legal_pipeline.query_stream(query=query, history=history):
                 yield chunk
         elif route == 'verdict':
-            async for chunk in self.verdict_pipeline.query_stream(query=query):
+            async for chunk in self.verdict_pipeline.query_stream(query=query, history=history):
                 yield chunk
         else:
-            async for chunk in self._combined_stream(query):
+            async for chunk in self._combined_stream(query, history=history):
                 yield chunk
 
-    async def _combined_stream(self, query: str):
+    async def _combined_stream(self, query: str, history: list = None):
         import asyncio
         
         legal_ctx = None
@@ -184,6 +185,7 @@ class SmartRouter:
             )
 
         prompt = f"""
+{format_history(history) if history else ""}
 CÂU HỎI: {query}
 
 {chr(10).join(context_parts)}

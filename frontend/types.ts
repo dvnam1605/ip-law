@@ -11,23 +11,23 @@ export interface Message {
 }
 
 export interface ChatSession {
-    id: string;
-    title: string;
-    messages: Message[];
-    createdAt: Date;
-    mode?: ChatMode;
+  id: string;
+  title: string;
+  messages: Message[];
+  createdAt: Date;
+  mode?: ChatMode;
 }
 
 export interface User {
-    id: number;
-    username: string;
-    created_at: string;
+  id: number;
+  username: string;
+  created_at: string;
 }
 
 export interface AuthResponse {
-    access_token: string;
-    token_type: string;
-    user: User;
+  access_token: string;
+  token_type: string;
+  user: User;
 }
 
 export interface ChatState {
@@ -57,6 +57,7 @@ export interface ApiMessage {
 // Request payload expected by the backend
 export interface QueryRequest {
   query: string;
+  session_id?: string;
 }
 
 // Response model expected from the backend
@@ -65,5 +66,5 @@ export interface QueryResponse {
   answer?: string;
   result?: string;
   text?: string;
-  [key: string]: any; 
+  [key: string]: any;
 }

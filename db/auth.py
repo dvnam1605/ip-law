@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
-from db.models import User
+from db.models import User, BlacklistedToken
 
 # ── Config ───────────────────────────────────────────
 
@@ -70,11 +70,22 @@ async def get_current_user(
             detail="Token không được cung cấp",
         )
 
-    payload = decode_token(credentials.credentials)
+    token = credentials.credentials
+    payload = decode_token(token)
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token không hợp lệ hoặc đã hết hạn",
+        )
+
+    # Check if token is blacklisted
+    result = await db.execute(
+        select(BlacklistedToken).where(BlacklistedToken.token == token)
+    )
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token đã bị thu hồi, vui lòng đăng nhập lại",
         )
 
     user_id = payload.get("sub")
@@ -107,3 +118,37 @@ async def get_optional_user(
         return await get_current_user(credentials, db)
     except HTTPException:
         return None
+
+
+async def blacklist_token(token: str, db: AsyncSession) -> None:
+    """Add a token to the blacklist."""
+    payload = decode_token(token)
+    if payload is None:
+        return  # Token already invalid, no need to blacklist
+
+    exp_timestamp = payload.get("exp")
+    expires_at = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc) if exp_timestamp else datetime.now(timezone.utc)
+
+    # Check if already blacklisted
+    result = await db.execute(
+        select(BlacklistedToken).where(BlacklistedToken.token == token)
+    )
+    if result.scalar_one_or_none():
+        return  # Already blacklisted
+
+    entry = BlacklistedToken(
+        token=token,
+        expires_at=expires_at,
+    )
+    db.add(entry)
+
+
+async def cleanup_expired_tokens(db: AsyncSession) -> int:
+    """Remove blacklisted tokens that have already expired (JWT rejects them anyway)."""
+    from sqlalchemy import delete as sa_delete
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        sa_delete(BlacklistedToken).where(BlacklistedToken.expires_at < now)
+    )
+    await db.commit()
+    return result.rowcount

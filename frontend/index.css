@@ -6,6 +6,13 @@ body {
   font-family: 'Inter', sans-serif;
   background-color: #ffffff;
   color: #030712;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.dark body,
+body.dark {
+  background-color: #0a0a0a;
+  color: #e5e7eb;
 }
 
 /* Custom scrollbar */
@@ -28,6 +35,10 @@ body {
   background-color: #374151;
 }
 
+.dark ::-webkit-scrollbar-thumb {
+  background-color: #4b5563;
+}
+
 /* Code block styling */
 pre {
   background: #111827;
@@ -45,7 +56,15 @@ code {
   padding: 0.1rem 0.3rem;
   border-radius: 0.2rem;
 }
+.dark code {
+  background-color: rgba(255,255,255,0.1);
+}
 pre code {
   background-color: transparent;
   padding: 0;
+}
+
+/* Smooth transitions for dark mode */
+*, *::before, *::after {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.15s ease;
 }

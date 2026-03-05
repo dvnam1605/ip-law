@@ -1,18 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatSession } from '../types';
-import { 
-  MessageSquarePlus, 
-  MessageSquare, 
-  LogOut, 
-  PanelLeftClose, 
-  MoreHorizontal, 
-  Pencil, 
-  Trash2, 
+import {
+  MessageSquarePlus,
+  MessageSquare,
+  LogOut,
+  PanelLeftClose,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
   Share2,
   Check,
   X,
   Scale,
-  BookOpen
+  BookOpen,
+  Settings,
+  Moon,
+  Sun
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -24,21 +27,27 @@ interface SidebarProps {
   onDeleteSession: (id: string) => void;
   onShareSession: (id: string) => void;
   onLogout: () => void;
+  onOpenSettings: () => void;
+  onToggleTheme: () => void;
+  isDarkMode: boolean;
   isMobileOpen: boolean;
   username: string;
   isDesktopOpen: boolean;
   toggleDesktopSidebar: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ 
-  sessions, 
-  currentSessionId, 
-  onSelectSession, 
-  onNewChat, 
+const Sidebar: React.FC<SidebarProps> = ({
+  sessions,
+  currentSessionId,
+  onSelectSession,
+  onNewChat,
   onRenameSession,
   onDeleteSession,
   onShareSession,
   onLogout,
+  onOpenSettings,
+  onToggleTheme,
+  isDarkMode,
   isMobileOpen,
   username,
   isDesktopOpen,
@@ -47,15 +56,20 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
-  
+  const [showUserMenu, setShowUserMenu] = useState(false);
+
   const editInputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
-  // Close menu when clicking outside
+  // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setActiveMenuId(null);
+      }
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -107,14 +121,14 @@ const Sidebar: React.FC<SidebarProps> = ({
           <MessageSquarePlus className="w-4 h-4 flex-shrink-0" />
           <span>Đoạn chat mới</span>
         </button>
-        
+
         {/* Toggle button visible only inside sidebar on Desktop */}
-        <button 
-            onClick={toggleDesktopSidebar}
-            className="hidden md:flex p-3 text-gray-400 hover:text-white rounded-xl hover:bg-gray-900 transition-colors"
-            title="Ẩn thanh bên"
+        <button
+          onClick={toggleDesktopSidebar}
+          className="hidden md:flex p-3 text-gray-400 hover:text-white rounded-xl hover:bg-gray-900 transition-colors"
+          title="Ẩn thanh bên"
         >
-            <PanelLeftClose className="w-5 h-5" />
+          <PanelLeftClose className="w-5 h-5" />
         </button>
       </div>
 
@@ -126,91 +140,91 @@ const Sidebar: React.FC<SidebarProps> = ({
             <div className="px-3 py-2 text-sm text-gray-500 italic font-light">Chưa có lịch sử chat</div>
           ) : (
             sessions.slice().reverse().map((session) => (
-              <div 
-                key={session.id} 
+              <div
+                key={session.id}
                 className={`group relative flex items-center rounded-lg transition-all ${currentSessionId === session.id ? 'bg-gray-900' : 'hover:bg-gray-900'}`}
               >
                 {/* Editing Mode */}
                 {editingSessionId === session.id ? (
-                   <div className="flex items-center w-full px-2 py-2 gap-1">
-                     <input
-                        ref={editInputRef}
-                        type="text"
-                        value={editTitle}
-                        onChange={(e) => setEditTitle(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        className="flex-1 bg-gray-800 text-white text-sm px-2 py-1 rounded outline-none border border-gray-600 focus:border-white"
-                     />
-                     <button onClick={handleSaveRename} className="p-1 text-green-400 hover:bg-gray-800 rounded">
-                        <Check size={14} />
-                     </button>
-                     <button onClick={handleCancelRename} className="p-1 text-red-400 hover:bg-gray-800 rounded">
-                        <X size={14} />
-                     </button>
-                   </div>
+                  <div className="flex items-center w-full px-2 py-2 gap-1">
+                    <input
+                      ref={editInputRef}
+                      type="text"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      className="flex-1 bg-gray-800 text-white text-sm px-2 py-1 rounded outline-none border border-gray-600 focus:border-white"
+                    />
+                    <button onClick={handleSaveRename} className="p-1 text-green-400 hover:bg-gray-800 rounded">
+                      <Check size={14} />
+                    </button>
+                    <button onClick={handleCancelRename} className="p-1 text-red-400 hover:bg-gray-800 rounded">
+                      <X size={14} />
+                    </button>
+                  </div>
                 ) : (
                   /* Display Mode */
                   <>
                     <button
-                        onClick={() => onSelectSession(session.id)}
-                        className="flex items-center gap-3 px-3 py-3 w-full text-left overflow-hidden"
+                      onClick={() => onSelectSession(session.id)}
+                      className="flex items-center gap-3 px-3 py-3 w-full text-left overflow-hidden"
                     >
-                        {session.mode === 'verdict' ? (
-                          <Scale className={`w-4 h-4 flex-shrink-0 ${currentSessionId === session.id ? 'text-amber-400' : 'text-gray-600 group-hover:text-gray-400'}`} />
-                        ) : (
-                          <BookOpen className={`w-4 h-4 flex-shrink-0 ${currentSessionId === session.id ? 'text-blue-400' : 'text-gray-600 group-hover:text-gray-400'}`} />
-                        )}
-                        <span className={`truncate flex-1 text-sm ${currentSessionId === session.id ? 'text-white font-medium' : 'text-gray-400 group-hover:text-gray-200'}`}>
-                            {session.title}
-                        </span>
+                      {session.mode === 'verdict' ? (
+                        <Scale className={`w-4 h-4 flex-shrink-0 ${currentSessionId === session.id ? 'text-amber-400' : 'text-gray-600 group-hover:text-gray-400'}`} />
+                      ) : (
+                        <BookOpen className={`w-4 h-4 flex-shrink-0 ${currentSessionId === session.id ? 'text-blue-400' : 'text-gray-600 group-hover:text-gray-400'}`} />
+                      )}
+                      <span className={`truncate flex-1 text-sm ${currentSessionId === session.id ? 'text-white font-medium' : 'text-gray-400 group-hover:text-gray-200'}`}>
+                        {session.title}
+                      </span>
                     </button>
 
                     {/* Menu Trigger Button - Visible on hover or if menu is active */}
                     <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setActiveMenuId(activeMenuId === session.id ? null : session.id);
-                        }}
-                        className={`absolute right-2 p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-800 transition-opacity ${activeMenuId === session.id ? 'opacity-100 bg-gray-800 text-white' : 'opacity-0 group-hover:opacity-100'}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveMenuId(activeMenuId === session.id ? null : session.id);
+                      }}
+                      className={`absolute right-2 p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-800 transition-opacity ${activeMenuId === session.id ? 'opacity-100 bg-gray-800 text-white' : 'opacity-0 group-hover:opacity-100'}`}
                     >
-                        <MoreHorizontal size={16} />
+                      <MoreHorizontal size={16} />
                     </button>
 
                     {/* Context Menu (Dropdown) */}
                     {activeMenuId === session.id && (
-                        <div 
-                            ref={menuRef}
-                            className="absolute right-0 top-full mt-1 w-40 bg-white rounded-lg shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100"
-                            style={{ top: '80%', right: '10px' }} 
+                      <div
+                        ref={menuRef}
+                        className="absolute right-0 top-full mt-1 w-40 bg-white rounded-lg shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100"
+                        style={{ top: '80%', right: '10px' }}
+                      >
+                        <button
+                          onClick={(e) => handleStartRename(session, e)}
+                          className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
                         >
-                            <button 
-                                onClick={(e) => handleStartRename(session, e)}
-                                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                            >
-                                <Pencil size={14} /> Đổi tên
-                            </button>
-                            <button 
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onShareSession(session.id);
-                                    setActiveMenuId(null);
-                                }}
-                                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                            >
-                                <Share2 size={14} /> Chia sẻ
-                            </button>
-                            <div className="h-px bg-gray-100 my-1"></div>
-                            <button 
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onDeleteSession(session.id);
-                                    setActiveMenuId(null);
-                                }}
-                                className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-                            >
-                                <Trash2 size={14} /> Xóa
-                            </button>
-                        </div>
+                          <Pencil size={14} /> Đổi tên
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onShareSession(session.id);
+                            setActiveMenuId(null);
+                          }}
+                          className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                        >
+                          <Share2 size={14} /> Chia sẻ
+                        </button>
+                        <div className="h-px bg-gray-100 my-1"></div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteSession(session.id);
+                            setActiveMenuId(null);
+                          }}
+                          className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                        >
+                          <Trash2 size={14} /> Xóa
+                        </button>
+                      </div>
                     )}
                   </>
                 )}
@@ -222,20 +236,55 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       {/* User Footer */}
       <div className="p-4 border-t border-gray-900 bg-black">
-        <div className="flex items-center justify-between px-3 py-2 rounded-xl hover:bg-gray-900 cursor-pointer group transition-colors">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center font-bold text-xs flex-shrink-0">
-              {username.charAt(0).toUpperCase()}
-            </div>
-            <div className="text-sm font-medium truncate">{username}</div>
-          </div>
-          <button 
-            onClick={onLogout}
-            className="text-gray-500 hover:text-white p-1 rounded transition-colors"
-            title="Đăng xuất"
+        <div className="relative" ref={userMenuRef}>
+          <div
+            onClick={() => setShowUserMenu(!showUserMenu)}
+            className="flex items-center justify-between px-3 py-2 rounded-xl hover:bg-gray-900 cursor-pointer group transition-colors"
           >
-            <LogOut className="w-4 h-4" />
-          </button>
+            <div className="flex items-center gap-3 overflow-hidden">
+              <div className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center font-bold text-xs flex-shrink-0">
+                {username.charAt(0).toUpperCase()}
+              </div>
+              <div className="text-sm font-medium truncate">{username}</div>
+            </div>
+            <div className="text-gray-500 hover:text-white p-1 rounded transition-colors">
+              <Settings className="w-4 h-4" />
+            </div>
+          </div>
+
+          {/* User Settings Dropdown */}
+          {showUserMenu && (
+            <div className="absolute bottom-full left-0 right-0 mb-2 bg-white rounded-lg shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100">
+              <button
+                onClick={() => {
+                  setShowUserMenu(false);
+                  onOpenSettings();
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-3"
+              >
+                <Settings size={16} className="text-gray-500" /> Cài đặt
+              </button>
+              <button
+                onClick={() => {
+                  onToggleTheme();
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-3"
+              >
+                {isDarkMode ? <Sun size={16} className="text-amber-500" /> : <Moon size={16} className="text-gray-500" />}
+                {isDarkMode ? 'Chế độ sáng' : 'Chế độ tối'}
+              </button>
+              <div className="h-px bg-gray-100 my-1"></div>
+              <button
+                onClick={() => {
+                  setShowUserMenu(false);
+                  onLogout();
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 flex items-center gap-3"
+              >
+                <LogOut size={16} /> Đăng xuất
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -57,7 +57,7 @@ const MarkdownContent: React.FC<{ content: string }> = ({ content }) => {
             );
           }
           return (
-            <code className="bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded text-sm font-mono" {...props}>
+            <code className="bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-1.5 py-0.5 rounded text-sm font-mono" {...props}>
               {children}
             </code>
           );
@@ -66,44 +66,44 @@ const MarkdownContent: React.FC<{ content: string }> = ({ content }) => {
         table({ children }) {
           return (
             <div className="overflow-x-auto my-4">
-              <table className="min-w-full border-collapse border border-gray-300 rounded-lg overflow-hidden">
+              <table className="min-w-full border-collapse border border-gray-300 dark:border-gray-700 rounded-lg overflow-hidden">
                 {children}
               </table>
             </div>
           );
         },
         thead({ children }) {
-          return <thead className="bg-gray-100">{children}</thead>;
+          return <thead className="bg-gray-100 dark:bg-gray-800">{children}</thead>;
         },
         tbody({ children }) {
-          return <tbody className="divide-y divide-gray-200">{children}</tbody>;
+          return <tbody className="divide-y divide-gray-200 dark:divide-gray-700">{children}</tbody>;
         },
         tr({ children }) {
-          return <tr className="hover:bg-gray-50 transition-colors">{children}</tr>;
+          return <tr className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">{children}</tr>;
         },
         th({ children }) {
           return (
-            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 border-b border-gray-300">
+            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 dark:text-gray-300 border-b border-gray-300 dark:border-gray-700">
               {children}
             </th>
           );
         },
         td({ children }) {
           return (
-            <td className="px-4 py-3 text-sm text-gray-600 border-b border-gray-200">
+            <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
               {children}
             </td>
           );
         },
         // Headers
         h1({ children }) {
-          return <h1 className="text-2xl font-bold text-gray-900 mt-6 mb-3">{children}</h1>;
+          return <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-6 mb-3">{children}</h1>;
         },
         h2({ children }) {
-          return <h2 className="text-xl font-bold text-gray-900 mt-5 mb-2">{children}</h2>;
+          return <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mt-5 mb-2">{children}</h2>;
         },
         h3({ children }) {
-          return <h3 className="text-lg font-semibold text-gray-800 mt-4 mb-2">{children}</h3>;
+          return <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mt-4 mb-2">{children}</h3>;
         },
         // Lists
         ul({ children }) {
@@ -113,7 +113,7 @@ const MarkdownContent: React.FC<{ content: string }> = ({ content }) => {
           return <ol className="list-decimal pl-5 my-2 space-y-1">{children}</ol>;
         },
         li({ children }) {
-          return <li className="text-gray-700 pl-1">{children}</li>;
+          return <li className="text-gray-700 dark:text-gray-300 pl-1">{children}</li>;
         },
         // Paragraphs
         p({ children }) {
@@ -121,7 +121,7 @@ const MarkdownContent: React.FC<{ content: string }> = ({ content }) => {
         },
         // Bold and italic
         strong({ children }) {
-          return <strong className="font-semibold text-gray-900">{children}</strong>;
+          return <strong className="font-semibold text-gray-900 dark:text-gray-100">{children}</strong>;
         },
         em({ children }) {
           return <em className="italic">{children}</em>;
@@ -129,7 +129,7 @@ const MarkdownContent: React.FC<{ content: string }> = ({ content }) => {
         // Links
         a({ href, children }) {
           return (
-            <a href={href} className="text-blue-600 hover:text-blue-800 underline" target="_blank" rel="noopener noreferrer">
+            <a href={href} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline" target="_blank" rel="noopener noreferrer">
               {children}
             </a>
           );
@@ -137,14 +137,14 @@ const MarkdownContent: React.FC<{ content: string }> = ({ content }) => {
         // Blockquotes
         blockquote({ children }) {
           return (
-            <blockquote className="border-l-4 border-gray-300 pl-4 my-3 italic text-gray-600">
+            <blockquote className="border-l-4 border-gray-300 dark:border-gray-600 pl-4 my-3 italic text-gray-600 dark:text-gray-400">
               {children}
             </blockquote>
           );
         },
         // Horizontal rule
         hr() {
-          return <hr className="my-4 border-gray-300" />;
+          return <hr className="my-4 border-gray-300 dark:border-gray-700" />;
         },
       }}
     >
@@ -154,9 +154,9 @@ const MarkdownContent: React.FC<{ content: string }> = ({ content }) => {
 };
 
 const routeLabels: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  legal: { label: 'Văn bản pháp luật', icon: <BookOpen className="w-3 h-3" />, color: 'bg-blue-50 text-blue-600 border-blue-100' },
-  verdict: { label: 'Bản án', icon: <Scale className="w-3 h-3" />, color: 'bg-amber-50 text-amber-600 border-amber-100' },
-  combined: { label: 'Tổng hợp', icon: <Layers className="w-3 h-3" />, color: 'bg-purple-50 text-purple-600 border-purple-100' },
+  legal: { label: 'Văn bản pháp luật', icon: <BookOpen className="w-3 h-3" />, color: 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 border-blue-100 dark:border-blue-800' },
+  verdict: { label: 'Bản án', icon: <Scale className="w-3 h-3" />, color: 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 border-amber-100 dark:border-amber-800' },
+  combined: { label: 'Tổng hợp', icon: <Layers className="w-3 h-3" />, color: 'bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 border-purple-100 dark:border-purple-800' },
 };
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
@@ -169,30 +169,30 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
       <div className={`flex max-w-[90%] md:max-w-[80%] lg:max-w-[70%] ${isUser ? 'flex-row-reverse' : 'flex-row'} gap-4 items-start`}>
 
         {/* Avatar */}
-        <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center shadow-sm border ${isUser ? 'bg-black border-black' : isError ? 'bg-red-500 border-red-500' : 'bg-white border-gray-200'
+        <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center shadow-sm border ${isUser ? 'bg-black dark:bg-white border-black dark:border-white' : isError ? 'bg-red-500 border-red-500' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
           }`}>
           {isUser ? (
-            <User className="w-4 h-4 text-white" />
+            <User className="w-4 h-4 text-white dark:text-black" />
           ) : isError ? (
             <AlertCircle className="w-4 h-4 text-white" />
           ) : (
-            <Bot className="w-4 h-4 text-black" />
+            <Bot className="w-4 h-4 text-black dark:text-gray-300" />
           )}
         </div>
 
         {/* Bubble Content */}
         <div
           className={`flex-1 min-w-0 ${isUser
-            ? 'bg-gray-100 text-gray-900 rounded-2xl rounded-tr-sm px-6 py-4'
+            ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-2xl rounded-tr-sm px-6 py-4'
             : isError
-              ? 'bg-red-50 text-red-600 border border-red-100 rounded-2xl rounded-tl-sm px-6 py-4'
-              : 'text-gray-900 pt-1'
+              ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-800 rounded-2xl rounded-tl-sm px-6 py-4'
+              : 'text-gray-900 dark:text-gray-100 pt-1'
             }`}
         >
           {isUser ? (
             <div className="whitespace-pre-wrap text-sm md:text-base leading-relaxed font-medium">{message.content}</div>
           ) : (
-            <div className="text-sm md:text-base leading-7 font-light text-gray-800">
+            <div className="text-sm md:text-base leading-7 font-light text-gray-800 dark:text-gray-200">
               {route && (
                 <div className="mb-2">
                   <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${route.color}`}>

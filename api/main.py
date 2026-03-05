@@ -1,6 +1,8 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 from datetime import datetime
@@ -19,15 +21,17 @@ from core.rag_pipeline import get_pipeline, RAGResponse
 from core.verdict_rag_pipeline import get_verdict_pipeline, VerdictRAGResponse
 from core.smart_router import get_smart_router
 
-from db.database import get_db, init_db
+from db.database import get_db, init_db, async_session_factory
 from db.models import User, ChatSession, Message
 from db.schemas import (
     UserCreate, UserLogin, TokenResponse, UserRead,
+    UsernameChange, PasswordChange,
     SessionCreate, SessionRename, SessionRead,
     MessageCreate, MessageRead, SessionWithMessages,
 )
 from db.auth import (
     hash_password, verify_password, create_access_token, get_current_user,
+    blacklist_token, cleanup_expired_tokens,
 )
 
 
@@ -37,6 +41,7 @@ from db.auth import (
 
 class SmartQueryRequest(BaseModel):
     query: str = Field(..., description="Câu hỏi pháp luật hoặc tình huống", min_length=5, max_length=5000)
+    session_id: Optional[str] = Field(None, description="Session ID để load lịch sử hội thoại")
 
 
 class QueryRequest(BaseModel):
@@ -55,6 +60,7 @@ class QueryRequest(BaseModel):
     top_k: Optional[int] = Field(5, ge=1, le=20, description="Số lượng tài liệu tham khảo (1-20)")
     query_date: Optional[str] = Field(None, description="Ngày truy vấn (YYYY-MM-DD)")
     doc_types: Optional[List[str]] = Field(None, description="Lọc theo loại văn bản")
+    session_id: Optional[str] = Field(None, description="Session ID để load lịch sử hội thoại")
 
 
 class SourceInfo(BaseModel):
@@ -91,6 +97,7 @@ class VerdictQueryRequest(BaseModel):
     top_k: Optional[int] = Field(8, ge=1, le=20, description="Số lượng tài liệu tham khảo (1-20)")
     ip_types: Optional[List[str]] = Field(None, description="Lọc theo loại SHTT")
     trial_level: Optional[str] = Field(None, description="Lọc theo cấp xét xử")
+    session_id: Optional[str] = Field(None, description="Session ID để load lịch sử hội thoại")
 
 
 class VerdictSourceInfo(BaseModel):
@@ -145,9 +152,30 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"❌ Failed to initialize Verdict RAG Pipeline: {e}")
 
+    # Background task: cleanup expired blacklisted tokens every 6 hours
+    async def token_cleanup_loop():
+        while True:
+            try:
+                await asyncio.sleep(6 * 3600)  # 6 hours
+                async with async_session_factory() as db:
+                    count = await cleanup_expired_tokens(db)
+                    if count:
+                        print(f"🧹 Cleaned up {count} expired blacklisted tokens")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"❌ Token cleanup error: {e}")
+
+    cleanup_task = asyncio.create_task(token_cleanup_loop())
+
     yield
 
     print("🛑 Shutting down Legal RAG API...")
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
     try:
         pipeline = get_pipeline()
         pipeline.close()
@@ -244,6 +272,47 @@ async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
 @app.get("/api/auth/me", response_model=UserRead)
 async def me(current_user: User = Depends(get_current_user)):
     return UserRead.model_validate(current_user)
+
+
+@app.post("/api/auth/logout")
+async def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
+    db: AsyncSession = Depends(get_db),
+):
+    """Blacklist the current token so it can no longer be used."""
+    await blacklist_token(credentials.credentials, db)
+    return {"detail": "Đã đăng xuất thành công"}
+
+
+@app.patch("/api/auth/username", response_model=UserRead)
+async def change_username(
+    data: UsernameChange,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Check if new username already taken
+    result = await db.execute(select(User).where(User.username == data.new_username))
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Tên đăng nhập đã tồn tại")
+
+    current_user.username = data.new_username
+    await db.flush()
+    await db.refresh(current_user)
+    return UserRead.model_validate(current_user)
+
+
+@app.patch("/api/auth/password")
+async def change_password(
+    data: PasswordChange,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not verify_password(data.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Mật khẩu hiện tại không đúng")
+
+    current_user.hashed_password = hash_password(data.new_password)
+    await db.flush()
+    return {"detail": "Đổi mật khẩu thành công"}
 
 
 # ═══════════════════════════════════════════════════════
@@ -386,6 +455,29 @@ async def add_message(
 #  RAG query endpoints (unchanged logic)
 # ═══════════════════════════════════════════════════════
 
+
+async def _load_history(session_id: Optional[str], limit: int = 5) -> list:
+    """Load last N messages from a session for conversation context."""
+    if not session_id:
+        return []
+    try:
+        async with async_session_factory() as db:
+            result = await db.execute(
+                select(Message)
+                .where(Message.session_id == session_id)
+                .order_by(Message.created_at.desc())
+                .limit(limit)
+            )
+            messages = result.scalars().all()
+            # Reverse to chronological order and return as dicts
+            return [
+                {"role": m.role, "content": m.content}
+                for m in reversed(messages)
+            ]
+    except Exception as e:
+        print(f"⚠️ Failed to load history: {e}")
+        return []
+
 @app.post("/api/query", response_model=QueryResponse)
 async def query_legal(request: QueryRequest):
 
@@ -438,6 +530,8 @@ async def query_legal_get(
 async def query_legal_stream(request: QueryRequest):
     from fastapi.responses import StreamingResponse
 
+    history = await _load_history(request.session_id)
+
     async def generate():
         try:
             pipeline = get_pipeline()
@@ -446,7 +540,8 @@ async def query_legal_stream(request: QueryRequest):
                 query=request.query,
                 top_k=request.top_k,
                 query_date=request.query_date,
-                doc_types=request.doc_types
+                doc_types=request.doc_types,
+                history=history,
             ):
                 escaped = chunk.replace('\\', '\\\\').replace('\n', '\\n')
                 yield f"data: {escaped}\n\n"
@@ -517,6 +612,8 @@ async def query_verdict_get(
 async def query_verdict_stream(request: VerdictQueryRequest):
     from fastapi.responses import StreamingResponse
 
+    history = await _load_history(request.session_id)
+
     async def generate():
         try:
             pipeline = get_verdict_pipeline()
@@ -525,7 +622,8 @@ async def query_verdict_stream(request: VerdictQueryRequest):
                 query=request.query,
                 top_k=request.top_k,
                 ip_types=request.ip_types,
-                trial_level=request.trial_level
+                trial_level=request.trial_level,
+                history=history,
             ):
                 escaped = chunk.replace('\\', '\\\\').replace('\n', '\\n')
                 yield f"data: {escaped}\n\n"
@@ -550,10 +648,12 @@ async def query_verdict_stream(request: VerdictQueryRequest):
 async def smart_query_stream(request: SmartQueryRequest):
     from fastapi.responses import StreamingResponse
 
+    history = await _load_history(request.session_id)
+
     async def generate():
         try:
             router = get_smart_router()
-            async for chunk in router.route_and_stream(query=request.query):
+            async for chunk in router.route_and_stream(query=request.query, history=history):
                 escaped = chunk.replace('\\', '\\\\').replace('\n', '\\n')
                 yield f"data: {escaped}\n\n"
             yield "data: [DONE]\n\n"

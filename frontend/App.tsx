@@ -4,6 +4,8 @@ import {
   sendQueryToBackendStream,
   getMe,
   clearToken,
+  logoutUser,
+  setOnUnauthorized,
   fetchSessions,
   createSessionApi,
   renameSessionApi,
@@ -16,6 +18,7 @@ import InputArea from './components/InputArea';
 import TypingIndicator from './components/TypingIndicator';
 import Sidebar from './components/Sidebar';
 import LoginPage from './components/LoginPage';
+import SettingsPage from './components/SettingsPage';
 import ModeSelector from './components/ModeSelector';
 import { Bot, Menu, PanelLeftOpen } from 'lucide-react';
 
@@ -31,6 +34,26 @@ const App: React.FC = () => {
   // Sidebar State
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(true);
+  const [currentView, setCurrentView] = useState<'chat' | 'settings'>('chat');
+
+  // Theme state - persisted to localStorage
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('theme');
+    return saved === 'dark';
+  });
+
+  // Apply dark class to <html> element
+  useEffect(() => {
+    const root = document.documentElement;
+    if (isDarkMode) {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+  }, [isDarkMode]);
+
+  const toggleTheme = () => setIsDarkMode(prev => !prev);
 
   // --- Refs ---
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -46,6 +69,13 @@ const App: React.FC = () => {
 
   // Auto-login on mount if token exists
   useEffect(() => {
+    // Register global 401 handler
+    setOnUnauthorized(() => {
+      setUser(null);
+      setSessions([]);
+      setCurrentSessionId(null);
+    });
+
     const checkAuth = async () => {
       try {
         const userData = await getMe();
@@ -121,8 +151,8 @@ const App: React.FC = () => {
     await loadSessions(u);
   };
 
-  const handleLogout = () => {
-    clearToken();
+  const handleLogout = async () => {
+    await logoutUser();
     setUser(null);
     setSessions([]);
     setCurrentSessionId(null);
@@ -325,7 +355,8 @@ const App: React.FC = () => {
         (route) => {
           botRouteType = route;
           updateMessageRouteType(botMessageId, route);
-        }
+        },
+        currentSessionId || undefined,
       );
     } catch (error) {
       setIsLoading(false);
@@ -354,7 +385,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-white selection:bg-black selection:text-white">
+    <div className={`flex h-screen overflow-hidden bg-white dark:bg-gray-950 selection:bg-black selection:text-white`}>
       {/* Sidebar Component */}
       <Sidebar
         sessions={sessions}
@@ -365,6 +396,9 @@ const App: React.FC = () => {
         onDeleteSession={handleDeleteSession}
         onShareSession={handleShareSession}
         onLogout={handleLogout}
+        onOpenSettings={() => setCurrentView('settings')}
+        onToggleTheme={toggleTheme}
+        isDarkMode={isDarkMode}
         isMobileOpen={isMobileSidebarOpen}
         username={user.username}
         isDesktopOpen={isDesktopSidebarOpen}
@@ -380,109 +414,120 @@ const App: React.FC = () => {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col h-full relative w-full transition-all duration-300">
+      {currentView === 'settings' ? (
+        <SettingsPage
+          username={user.username}
+          onBack={() => setCurrentView('chat')}
+          onUsernameChanged={(newUsername) => {
+            setUser(prev => prev ? { ...prev, username: newUsername } : null);
+          }}
+          isDarkMode={isDarkMode}
+        />
+      ) : (
+        <div className="flex-1 flex flex-col h-full relative w-full transition-all duration-300">
 
-        {/* Mobile Header */}
-        <header className="flex-shrink-0 bg-white border-b border-gray-100 flex items-center justify-between px-4 py-3 md:hidden z-10">
-          <button
-            onClick={() => setIsMobileSidebarOpen(true)}
-            className="p-2 -ml-2 text-gray-600 hover:bg-gray-100 rounded-lg"
-          >
-            <Menu className="w-6 h-6" />
-          </button>
-          <div className="font-semibold text-gray-900 truncate max-w-[200px]">
-            {currentSession?.title || 'Chat'}
-          </div>
-          <div className="w-8"></div>
-        </header>
-
-        {/* Desktop Header / Toolbar */}
-        <div className="hidden md:flex items-center justify-between px-6 py-4 bg-white/90 backdrop-blur z-10">
-          <div className="flex items-center gap-3">
-            {!isDesktopSidebarOpen && (
-              <button
-                onClick={() => setIsDesktopSidebarOpen(true)}
-                className="p-2 text-gray-500 hover:text-black hover:bg-gray-100 rounded-lg transition-colors"
-                title="Hiện thanh bên"
-              >
-                <PanelLeftOpen className="w-5 h-5" />
-              </button>
-            )}
-            <div className="font-semibold text-lg text-gray-800">
-              {currentSession?.title}
+          {/* Mobile Header */}
+          <header className="flex-shrink-0 bg-white dark:bg-gray-950 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between px-4 py-3 md:hidden z-10">
+            <button
+              onClick={() => setIsMobileSidebarOpen(true)}
+              className="p-2 -ml-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+            >
+              <Menu className="w-6 h-6" />
+            </button>
+            <div className="font-semibold text-gray-900 dark:text-gray-100 truncate max-w-[200px]">
+              {currentSession?.title || 'Chat'}
             </div>
-          </div>
-          <div className="flex items-center gap-4">
-            <ModeSelector mode={chatMode} onModeChange={(mode) => {
-              setChatMode(mode);
-              const isCurrentEmpty = currentSession &&
-                currentSession.title === 'Đoạn chat mới' &&
-                currentSession.messages.length <= 1;
-              if (isCurrentEmpty && currentSession) {
-                const welcomeMessages: Record<ChatMode, string> = {
-                  smart: 'Xin chào! Hãy hỏi bất kỳ câu hỏi nào về Sở hữu trí tuệ — tôi sẽ tự động tìm nguồn phù hợp nhất (luật, bản án, hoặc cả hai).',
-                  verdict: 'Xin chào! Tôi có thể phân tích tình huống pháp lý dựa trên các bản án thực tế về Sở hữu trí tuệ. Hãy mô tả tình huống của bạn!',
-                  legal: 'Xin chào! Tôi có thể giúp gì cho bạn về các quy định pháp luật?',
-                };
-                setSessions(prev => prev.map(s =>
-                  s.id === currentSession.id
-                    ? { ...s, mode, messages: [{ ...s.messages[0], content: welcomeMessages[mode] }] }
-                    : s
-                ));
-              } else {
-                createNewSession(mode);
-              }
-            }} />
-            <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 rounded-full border border-gray-100">
-              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-              <span className="text-xs font-medium text-gray-500">Online</span>
-            </div>
-          </div>
-        </div>
+            <div className="w-8"></div>
+          </header>
 
-        {/* Chat Area */}
-        <main className="flex-1 overflow-y-auto px-4 md:px-0">
-          <div className="max-w-3xl mx-auto h-full py-8 flex flex-col">
-            {currentMessages.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-gray-300">
-                <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mb-6">
-                  <Bot className="w-8 h-8 text-gray-400" />
-                </div>
-                <p className="font-light text-lg text-gray-400">
-                  {chatMode === 'smart'
-                    ? 'Hỏi bất kỳ câu hỏi nào — tôi sẽ tự động tìm nguồn phù hợp'
-                    : chatMode === 'verdict'
-                      ? 'Hãy mô tả tình huống pháp lý để tôi phân tích dựa trên bản án'
-                      : 'Tôi có thể giúp gì cho bạn hôm nay?'}
-                </p>
+          {/* Desktop Header / Toolbar */}
+          <div className="hidden md:flex items-center justify-between px-6 py-4 bg-white/90 dark:bg-gray-950/90 backdrop-blur z-10">
+            <div className="flex items-center gap-3">
+              {!isDesktopSidebarOpen && (
+                <button
+                  onClick={() => setIsDesktopSidebarOpen(true)}
+                  className="p-2 text-gray-500 hover:text-black dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                  title="Hiện thanh bên"
+                >
+                  <PanelLeftOpen className="w-5 h-5" />
+                </button>
+              )}
+              <div className="font-semibold text-lg text-gray-800 dark:text-gray-200">
+                {currentSession?.title}
               </div>
-            ) : (
-              <>
-                {currentMessages.map((msg) => (
-                  <MessageBubble key={msg.id} message={msg} />
-                ))}
-
-                {isLoading && (
-                  <div className="flex justify-start mb-8 animate-pulse">
-                    <div className="flex flex-row gap-4 items-center">
-                      <div className="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center">
-                        <Bot className="w-4 h-4 text-black" />
-                      </div>
-                      <TypingIndicator />
-                    </div>
-                  </div>
-                )}
-                <div ref={messagesEndRef} className="h-4" />
-              </>
-            )}
+            </div>
+            <div className="flex items-center gap-4">
+              <ModeSelector mode={chatMode} onModeChange={(mode) => {
+                setChatMode(mode);
+                const isCurrentEmpty = currentSession &&
+                  currentSession.title === 'Đoạn chat mới' &&
+                  currentSession.messages.length <= 1;
+                if (isCurrentEmpty && currentSession) {
+                  const welcomeMessages: Record<ChatMode, string> = {
+                    smart: 'Xin chào! Hãy hỏi bất kỳ câu hỏi nào về Sở hữu trí tuệ — tôi sẽ tự động tìm nguồn phù hợp nhất (luật, bản án, hoặc cả hai).',
+                    verdict: 'Xin chào! Tôi có thể phân tích tình huống pháp lý dựa trên các bản án thực tế về Sở hữu trí tuệ. Hãy mô tả tình huống của bạn!',
+                    legal: 'Xin chào! Tôi có thể giúp gì cho bạn về các quy định pháp luật?',
+                  };
+                  setSessions(prev => prev.map(s =>
+                    s.id === currentSession.id
+                      ? { ...s, mode, messages: [{ ...s.messages[0], content: welcomeMessages[mode] }] }
+                      : s
+                  ));
+                } else {
+                  createNewSession(mode);
+                }
+              }} />
+              <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 dark:bg-gray-800 rounded-full border border-gray-100 dark:border-gray-700">
+                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                <span className="text-xs font-medium text-gray-500">Online</span>
+              </div>
+            </div>
           </div>
-        </main>
 
-        {/* Input Area */}
-        <footer className="flex-shrink-0 bg-white">
-          <InputArea onSend={handleSendMessage} disabled={isLoading} />
-        </footer>
-      </div>
+          {/* Chat Area */}
+          <main className="flex-1 overflow-y-auto px-4 md:px-0">
+            <div className="max-w-3xl mx-auto h-full py-8 flex flex-col">
+              {currentMessages.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-gray-300">
+                  <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mb-6">
+                    <Bot className="w-8 h-8 text-gray-400" />
+                  </div>
+                  <p className="font-light text-lg text-gray-400">
+                    {chatMode === 'smart'
+                      ? 'Hỏi bất kỳ câu hỏi nào — tôi sẽ tự động tìm nguồn phù hợp'
+                      : chatMode === 'verdict'
+                        ? 'Hãy mô tả tình huống pháp lý để tôi phân tích dựa trên bản án'
+                        : 'Tôi có thể giúp gì cho bạn hôm nay?'}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {currentMessages.map((msg) => (
+                    <MessageBubble key={msg.id} message={msg} />
+                  ))}
+
+                  {isLoading && (
+                    <div className="flex justify-start mb-8 animate-pulse">
+                      <div className="flex flex-row gap-4 items-center">
+                        <div className="w-8 h-8 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center">
+                          <Bot className="w-4 h-4 text-black" />
+                        </div>
+                        <TypingIndicator />
+                      </div>
+                    </div>
+                  )}
+                  <div ref={messagesEndRef} className="h-4" />
+                </>
+              )}
+            </div>
+          </main>
+
+          {/* Input Area */}
+          <footer className="flex-shrink-0 bg-white dark:bg-gray-950">
+            <InputArea onSend={handleSendMessage} disabled={isLoading} />
+          </footer>
+        </div>
+      )}
     </div>
   );
 };

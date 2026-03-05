@@ -67,6 +67,24 @@ VĂN BẢN PHÁP LUẬT:
 Trả lời tự nhiên, mượt mà như đang giải thích cho người bình thường. Không dùng header cứng nhắc.
 """
 
+HISTORY_TEMPLATE = """
+LỊCH SỬ HỘI THOẠI (tham khảo để hiểu ngữ cảnh):
+{history}
+"""
+
+def format_history(history: list) -> str:
+    """Format conversation history for prompt injection."""
+    if not history:
+        return ""
+    lines = []
+    for msg in history:
+        role = "User" if msg.get("role") == "user" else "Assistant"
+        content = msg.get("content", "")
+        if role == "Assistant" and len(content) > 500:
+            content = content[:500] + "..."
+        lines.append(f"{role}: {content}")
+    return HISTORY_TEMPLATE.format(history="\n".join(lines))
+
 
 class GeminiRAGPipeline:
     _instance = None
@@ -194,6 +212,7 @@ class GeminiRAGPipeline:
         top_k: int = None,
         query_date: str = None,
         doc_types: List[str] = None,
+        history: List[Dict] = None,
     ):
         import asyncio
         
@@ -214,7 +233,8 @@ class GeminiRAGPipeline:
             return
         
         context = self._format_context(results)
-        user_prompt = USER_PROMPT_TEMPLATE.format(query=query, context=context)
+        history_text = format_history(history) if history else ""
+        user_prompt = f"{history_text}\n{USER_PROMPT_TEMPLATE.format(query=query, context=context)}"
         
         response = await self.client.aio.models.generate_content_stream(
             model=self.model_name,
