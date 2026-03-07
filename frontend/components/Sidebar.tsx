@@ -15,7 +15,8 @@ import {
   BookOpen,
   Settings,
   Moon,
-  Sun
+  Sun,
+  Search
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -28,6 +29,7 @@ interface SidebarProps {
   onShareSession: (id: string) => void;
   onLogout: () => void;
   onOpenSettings: () => void;
+  onOpenTrademarkSearch: () => void;
   onToggleTheme: () => void;
   isDarkMode: boolean;
   isMobileOpen: boolean;
@@ -46,6 +48,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShareSession,
   onLogout,
   onOpenSettings,
+  onOpenTrademarkSearch,
   onToggleTheme,
   isDarkMode,
   isMobileOpen,
@@ -129,6 +132,17 @@ const Sidebar: React.FC<SidebarProps> = ({
           title="Ẩn thanh bên"
         >
           <PanelLeftClose className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Trademark Search Button */}
+      <div className="px-4 pb-2">
+        <button
+          onClick={onOpenTrademarkSearch}
+          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-400 hover:text-white hover:bg-gray-900 rounded-xl transition-colors"
+        >
+          <Search className="w-4 h-4" />
+          <span>Tra cứu Nhãn hiệu</span>
         </button>
       </div>
 

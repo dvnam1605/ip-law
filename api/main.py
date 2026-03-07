@@ -694,7 +694,7 @@ async def trademark_search(request: TrademarkSearchRequest):
     start_time = datetime.now()
     try:
         pipeline = get_trademark_pipeline()
-        matches = pipeline.search(
+        matches = await pipeline.search_async(
             brand_name=request.brand_name,
             nice_classes=request.nice_classes,
             limit=request.limit,
@@ -714,6 +714,13 @@ async def trademark_search(request: TrademarkSearchRequest):
                 status_date=m.status_date,
                 similarity_score=m.similarity_score,
                 match_type=m.match_type,
+                st13=m.st13,
+                application_number=m.application_number,
+                registration_date=m.registration_date,
+                application_date=m.application_date,
+                expiry_date=m.expiry_date,
+                feature=m.feature,
+                ip_office=m.ip_office,
             )
             for m in matches
         ]

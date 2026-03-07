@@ -19,6 +19,7 @@ import TypingIndicator from './components/TypingIndicator';
 import Sidebar from './components/Sidebar';
 import LoginPage from './components/LoginPage';
 import SettingsPage from './components/SettingsPage';
+import TrademarkSearchPage from './components/TrademarkSearchPage';
 import ModeSelector from './components/ModeSelector';
 import { Bot, Menu, PanelLeftOpen } from 'lucide-react';
 
@@ -34,7 +35,7 @@ const App: React.FC = () => {
   // Sidebar State
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(true);
-  const [currentView, setCurrentView] = useState<'chat' | 'settings'>('chat');
+  const [currentView, setCurrentView] = useState<'chat' | 'settings' | 'trademark-search'>('chat');
 
   // Theme state - persisted to localStorage
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -160,8 +161,24 @@ const App: React.FC = () => {
 
   const createNewSession = async (overrideMode?: ChatMode) => {
     const mode = overrideMode || chatMode;
+
+    // If there's already an empty "Đoạn chat mới" with same mode, just switch to it
+    const existingEmpty = sessions.find(s =>
+      s.title === 'Đoạn chat mới' &&
+      s.mode === mode &&
+      s.messages.length <= 1
+    );
+    if (existingEmpty) {
+      setCurrentSessionId(existingEmpty.id);
+      setChatMode(mode);
+      setIsMobileSidebarOpen(false);
+      setCurrentView('chat');
+      return;
+    }
+
     try {
       const apiSession = await createSessionApi('Đoạn chat mới', mode);
+      console.log('[createNewSession] API returned:', apiSession);
       const welcomeMessages: Record<ChatMode, string> = {
         smart: 'Xin chào! Hãy hỏi bất kỳ câu hỏi nào về Sở hữu trí tuệ — tôi sẽ tự động tìm nguồn phù hợp nhất (luật, bản án, hoặc cả hai).',
         verdict: 'Xin chào! Tôi có thể phân tích tình huống pháp lý dựa trên các bản án thực tế về Sở hữu trí tuệ. Hãy mô tả tình huống của bạn!',
@@ -187,6 +204,7 @@ const App: React.FC = () => {
       setSessions(prev => [...prev, newSession]);
       setCurrentSessionId(newSession.id);
       setIsMobileSidebarOpen(false);
+      setCurrentView('chat');
     } catch (err) {
       console.error('Failed to create session:', err);
     }
@@ -199,6 +217,7 @@ const App: React.FC = () => {
       setChatMode(session.mode);
     }
     setIsMobileSidebarOpen(false);
+    setCurrentView('chat');
 
     // Load messages if not already loaded
     if (session && session.messages.length === 0) {
@@ -394,12 +413,13 @@ const App: React.FC = () => {
         sessions={sessions}
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
-        onNewChat={createNewSession}
+        onNewChat={() => createNewSession()}
         onRenameSession={handleRenameSession}
         onDeleteSession={handleDeleteSession}
         onShareSession={handleShareSession}
         onLogout={handleLogout}
         onOpenSettings={() => setCurrentView('settings')}
+        onOpenTrademarkSearch={() => setCurrentView('trademark-search')}
         onToggleTheme={toggleTheme}
         isDarkMode={isDarkMode}
         isMobileOpen={isMobileSidebarOpen}
@@ -424,6 +444,11 @@ const App: React.FC = () => {
           onUsernameChanged={(newUsername) => {
             setUser(prev => prev ? { ...prev, username: newUsername } : null);
           }}
+          isDarkMode={isDarkMode}
+        />
+      ) : currentView === 'trademark-search' ? (
+        <TrademarkSearchPage
+          onBack={() => setCurrentView('chat')}
           isDarkMode={isDarkMode}
         />
       ) : (
@@ -462,23 +487,12 @@ const App: React.FC = () => {
             <div className="flex items-center gap-4">
               <ModeSelector mode={chatMode} onModeChange={(mode) => {
                 setChatMode(mode);
-                const isCurrentEmpty = currentSession &&
-                  currentSession.title === 'Đoạn chat mới' &&
-                  currentSession.messages.length <= 1;
-                if (isCurrentEmpty && currentSession) {
-                  const welcomeMessages: Record<ChatMode, string> = {
-                    smart: 'Xin chào! Hãy hỏi bất kỳ câu hỏi nào về Sở hữu trí tuệ — tôi sẽ tự động tìm nguồn phù hợp nhất (luật, bản án, hoặc cả hai).',
-                    verdict: 'Xin chào! Tôi có thể phân tích tình huống pháp lý dựa trên các bản án thực tế về Sở hữu trí tuệ. Hãy mô tả tình huống của bạn!',
-                    legal: 'Xin chào! Tôi có thể giúp gì cho bạn về các quy định pháp luật?',
-                    trademark: 'Xin chào! Tôi có thể tra cứu nhãn hiệu đã đăng ký và phân tích xung đột. Hãy nhập tên nhãn hiệu bạn muốn kiểm tra!',
-                  };
+                if (currentSession) {
                   setSessions(prev => prev.map(s =>
                     s.id === currentSession.id
-                      ? { ...s, mode, messages: [{ ...s.messages[0], content: welcomeMessages[mode] }] }
+                      ? { ...s, mode }
                       : s
                   ));
-                } else {
-                  createNewSession(mode);
                 }
               }} />
               <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 dark:bg-gray-800 rounded-full border border-gray-100 dark:border-gray-700">

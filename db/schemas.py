@@ -119,6 +119,13 @@ class TrademarkResult(BaseModel):
     status_date: str = ""
     similarity_score: float = 0.0
     match_type: str = ""  # "exact", "fuzzy", "semantic"
+    st13: str = ""
+    application_number: str = ""
+    registration_date: str = ""
+    application_date: str = ""
+    expiry_date: str = ""
+    feature: str = ""
+    ip_office: str = ""
 
 
 class TrademarkSearchResponse(BaseModel):

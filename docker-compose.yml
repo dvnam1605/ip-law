@@ -19,7 +19,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     container_name: postgres_legal_rag
     ports:
       - "1607:5432"

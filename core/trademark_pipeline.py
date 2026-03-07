@@ -1,6 +1,7 @@
 """
 Trademark RAG Pipeline
-3-tier trademark search (exact → fuzzy → semantic) + Gemini AI conflict analysis.
+2-tier trademark search (exact → fuzzy via pg_trgm) + Gemini AI conflict analysis.
+Uses PostgreSQL with pg_trgm for fuzzy matching.
 """
 import os
 import sys
@@ -18,21 +19,13 @@ from google.genai import types
 sys.path.insert(0, str(PROJECT_ROOT))
 from core.rag_pipeline import format_history
 
-try:
-    from neo4j import GraphDatabase
-    NEO4J_AVAILABLE = True
-except ImportError:
-    NEO4J_AVAILABLE = False
-
-try:
-    from sentence_transformers import SentenceTransformer
-    ST_AVAILABLE = True
-except ImportError:
-    ST_AVAILABLE = False
+from sqlalchemy import text, select, func, or_, case, literal
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from db.database import DATABASE_URL
+from db.models import Trademark, NiceClass
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-EMBEDDING_MODEL_PATH = str(PROJECT_ROOT / "vietnamese_embedding")
 
 
 @dataclass
@@ -48,6 +41,13 @@ class TrademarkMatch:
     status_date: str
     similarity_score: float
     match_type: str  # "exact", "fuzzy", "semantic"
+    st13: str = ""
+    application_number: str = ""
+    registration_date: str = ""
+    application_date: str = ""
+    expiry_date: str = ""
+    feature: str = ""
+    ip_office: str = ""
 
 
 TRADEMARK_SYSTEM_PROMPT = """Bạn là Chuyên gia Nhãn hiệu AI chuyên phân tích xung đột nhãn hiệu tại Việt Nam.
@@ -66,9 +66,9 @@ Khi người dùng nhập tên nhãn hiệu, bạn phải:
 
 ### 2. Phân tích chi tiết từng nhãn hiệu xung đột
 Trình bày dạng **bảng** gồm các cột:
-| Nhãn hiệu | Chủ sở hữu | Số đăng ký | Nhóm Nice | Trạng thái | Mức giống |
+| Nhãn hiệu | Chủ sở hữu | Số đăng ký | Nhóm Nice | Trạng thái | Ngày hết hạn | Mức giống |
 
-### 3. Đánh giá rủi ro
+### 3. Đánh giá rủi ro(đánh giá 1 trong 3 mức: Cao / Trung bình / Thấp)
 - **🔴 Rủi ro CAO**: Trùng hoặc gần trùng tên + cùng nhóm Nice → gần như không đăng ký được
 - **🟡 Rủi ro TRUNG BÌNH**: Tên tương tự nhưng khác nhóm Nice → có thể đăng ký nhưng cần cân nhắc
 - **🟢 Rủi ro THẤP**: Chỉ tương tự về ngữ nghĩa → khả năng đăng ký cao
@@ -95,140 +95,125 @@ Hãy phân tích chi tiết mức độ xung đột và đưa ra khuyến nghị
 
 
 class TrademarkRetriever:
-    """3-tier trademark retrieval from Neo4j."""
+    """2-tier trademark retrieval from PostgreSQL (exact + fuzzy via pg_trgm)."""
 
-    def __init__(
-        self,
-        uri: str = None,
-        user: str = None,
-        password: str = None,
-        embedding_model_path: str = None,
-    ):
-        if not NEO4J_AVAILABLE:
-            raise ImportError("neo4j required")
-
-        self.uri = uri or os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
-        self.user = user or os.getenv("NEO4J_USER", "neo4j")
-        self.password = password or os.getenv("NEO4J_PASSWORD", "aa")
-
-        self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
-
-        # Embedding model (shared with other pipelines)
-        self.embedding_model = None
-        model_path = embedding_model_path or EMBEDDING_MODEL_PATH
-        if ST_AVAILABLE and Path(model_path).exists():
-            self.embedding_model = SentenceTransformer(model_path)
-            self.embedding_dim = self.embedding_model.get_sentence_embedding_dimension()
+    def __init__(self):
+        self.engine = create_async_engine(DATABASE_URL, echo=False)
+        self.session_factory = async_sessionmaker(
+            self.engine, class_=AsyncSession, expire_on_commit=False
+        )
 
     def close(self):
-        self.driver.close()
-
-    def _run_query(self, query: str, params: Dict = None) -> List[Dict]:
-        with self.driver.session() as session:
-            result = session.run(query, params or {})
-            return [record.data() for record in result]
-
-    def encode_query(self, text: str) -> List[float]:
-        if not self.embedding_model:
-            raise ValueError("Embedding model not loaded")
-        return self.embedding_model.encode(text).tolist()
-
-    def search_exact(self, brand_name: str, limit: int = 20) -> List[TrademarkMatch]:
-        """Tier 1: Exact / CONTAINS match on brand_name."""
-        results = self._run_query("""
-            MATCH (t:Trademark)
-            WHERE toLower(t.brand_name) CONTAINS toLower($name)
-            RETURN t {.*} AS trademark
-            ORDER BY
-                CASE WHEN toLower(t.brand_name) = toLower($name) THEN 0 ELSE 1 END,
-                t.brand_name
-            LIMIT $limit
-        """, {"name": brand_name, "limit": limit})
-
-        matches = []
-        for r in results:
-            t = r["trademark"]
-            name_lower = t.get("brand_name", "").lower()
-            query_lower = brand_name.lower()
-            # Score: 1.0 for exact, 0.8 for contains
-            score = 1.0 if name_lower == query_lower else 0.8
-            matches.append(self._to_match(t, score, "exact"))
-        return matches
-
-    def search_fuzzy(self, brand_name: str, limit: int = 20) -> List[TrademarkMatch]:
-        """Tier 2: Full-text fuzzy search using Neo4j fulltext index."""
-        # Use fulltext index with fuzzy operator (~)
-        fuzzy_query = f"{brand_name}~"
+        import asyncio
         try:
-            results = self._run_query("""
-                CALL db.index.fulltext.queryNodes('trademark_brand_name_fulltext', $query)
-                YIELD node, score
-                RETURN node {.*} AS trademark, score
-                ORDER BY score DESC
-                LIMIT $limit
-            """, {"query": fuzzy_query, "limit": limit})
-        except Exception:
-            # Fallback if fulltext index doesn't exist
-            return []
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.engine.dispose())
+        except RuntimeError:
+            asyncio.run(self.engine.dispose())
+
+    def _row_to_match(self, row: Trademark, score: float, match_type: str) -> TrademarkMatch:
+        nice = [nc.class_number for nc in row.nice_classes] if row.nice_classes else []
+        return TrademarkMatch(
+            brand_name=row.brand_name or "",
+            owner_name=row.owner_name or "",
+            owner_country=row.owner_country or "",
+            registration_number=row.registration_number or "",
+            nice_classes=nice,
+            ipr_type=row.ipr_type or "",
+            country_of_filing=row.country_of_filing or "",
+            status=row.status or "",
+            status_date=row.status_date or "",
+            similarity_score=round(score, 4),
+            match_type=match_type,
+            st13=row.st13 or "",
+            application_number=row.application_number or "",
+            registration_date=row.registration_date or "",
+            application_date=row.application_date or "",
+            expiry_date=row.expiry_date or "",
+            feature=row.feature or "",
+            ip_office=row.ip_office or "",
+        )
+
+    async def search_exact_async(self, brand_name: str, limit: int = 20) -> List[TrademarkMatch]:
+        """Tier 1: Exact / CONTAINS match using ILIKE."""
+        async with self.session_factory() as session:
+            pattern = f"%{brand_name}%"
+            query = (
+                select(Trademark)
+                .where(Trademark.brand_name_lower.ilike(pattern.lower()))
+                .order_by(
+                    case(
+                        (func.lower(Trademark.brand_name) == brand_name.lower(), 0),
+                        else_=1,
+                    ),
+                    Trademark.brand_name,
+                )
+                .limit(limit)
+            )
+            result = await session.execute(query)
+            rows = result.scalars().all()
 
         matches = []
-        for r in results:
-            t = r["trademark"]
-            # Normalize score to 0-1 range (fulltext scores can be > 1)
-            score = min(r["score"] / 5.0, 0.9)
-            matches.append(self._to_match(t, score, "fuzzy"))
+        for row in rows:
+            is_exact = row.brand_name_lower == brand_name.lower()
+            score = 1.0 if is_exact else 0.8
+            matches.append(self._row_to_match(row, score, "exact"))
         return matches
 
-    def search_semantic(self, brand_name: str, limit: int = 20) -> List[TrademarkMatch]:
-        """Tier 3: Vector similarity search using embeddings."""
-        if not self.embedding_model:
-            return []
+    async def search_fuzzy_async(self, brand_name: str, limit: int = 20) -> List[TrademarkMatch]:
+        """Tier 2: Fuzzy search using pg_trgm similarity."""
+        async with self.session_factory() as session:
+            # Use raw SQL for pg_trgm similarity function
+            sql = text("""
+                SELECT t.id, similarity(t.brand_name_lower, :name) AS sim
+                FROM trademarks t
+                WHERE similarity(t.brand_name_lower, :name) > 0.15
+                ORDER BY sim DESC
+                LIMIT :lim
+            """)
+            result = await session.execute(sql, {"name": brand_name.lower(), "lim": limit})
+            sim_rows = result.fetchall()
 
-        query_embedding = self.encode_query(brand_name)
+            if not sim_rows:
+                return []
 
-        try:
-            results = self._run_query("""
-                CALL db.index.vector.queryNodes('trademark_embedding', $limit, $embedding)
-                YIELD node, score
-                RETURN node {.*} AS trademark, score
-                ORDER BY score DESC
-                LIMIT $limit
-            """, {"embedding": query_embedding, "limit": limit})
-        except Exception:
-            return []
+            ids = [r[0] for r in sim_rows]
+            sim_map = {r[0]: r[1] for r in sim_rows}
+
+            # Fetch full Trademark objects
+            tm_result = await session.execute(
+                select(Trademark).where(Trademark.id.in_(ids))
+            )
+            tm_rows = {t.id: t for t in tm_result.scalars().all()}
 
         matches = []
-        for r in results:
-            t = r["trademark"]
-            score = r["score"]
-            matches.append(self._to_match(t, score, "semantic"))
+        for tid in ids:
+            row = tm_rows.get(tid)
+            if row:
+                score = min(sim_map[tid], 0.95)
+                matches.append(self._row_to_match(row, score, "fuzzy"))
         return matches
 
-    def search(
+    async def search_async(
         self,
         brand_name: str,
         nice_classes: List[str] = None,
         limit: int = 20,
     ) -> List[TrademarkMatch]:
-        """
-        Combined 3-tier search: exact → fuzzy → semantic.
-        Deduplicates by registration_number, keeps highest score.
-        """
-        # Run all tiers
-        exact = self.search_exact(brand_name, limit)
-        fuzzy = self.search_fuzzy(brand_name, limit)
-        semantic = self.search_semantic(brand_name, limit)
+        """Combined 2-tier search: exact → fuzzy. Deduplicates by st13/registration_number."""
+        exact = await self.search_exact_async(brand_name, limit)
+        fuzzy = await self.search_fuzzy_async(brand_name, limit)
 
-        # Merge & dedup
         seen = {}
-        for match in exact + fuzzy + semantic:
-            key = match.registration_number
+        for match in exact + fuzzy:
+            key = match.st13 or match.registration_number
+            if not key:
+                continue
             if key not in seen or match.similarity_score > seen[key].similarity_score:
                 seen[key] = match
 
         results = sorted(seen.values(), key=lambda m: m.similarity_score, reverse=True)
 
-        # Filter by Nice class if specified
         if nice_classes:
             nice_set = set(nice_classes)
             results = [
@@ -238,20 +223,27 @@ class TrademarkRetriever:
 
         return results[:limit]
 
-    def _to_match(self, t: Dict, score: float, match_type: str) -> TrademarkMatch:
-        return TrademarkMatch(
-            brand_name=t.get("brand_name", ""),
-            owner_name=t.get("owner_name", ""),
-            owner_country=t.get("owner_country", ""),
-            registration_number=t.get("registration_number", ""),
-            nice_classes=t.get("nice_classes", []),
-            ipr_type=t.get("ipr_type", ""),
-            country_of_filing=t.get("country_of_filing", ""),
-            status=t.get("status", ""),
-            status_date=t.get("status_date", ""),
-            similarity_score=round(score, 4),
-            match_type=match_type,
-        )
+    def search(
+        self,
+        brand_name: str,
+        nice_classes: List[str] = None,
+        limit: int = 20,
+    ) -> List[TrademarkMatch]:
+        """Synchronous wrapper for search_async."""
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(
+                    asyncio.run, self.search_async(brand_name, nice_classes, limit)
+                ).result()
+        else:
+            return asyncio.run(self.search_async(brand_name, nice_classes, limit))
 
 
 class TrademarkPipeline:
@@ -280,13 +272,22 @@ class TrademarkPipeline:
         self._initialized = True
         print("✅ Trademark Pipeline ready")
 
+    async def search_async(
+        self,
+        brand_name: str,
+        nice_classes: List[str] = None,
+        limit: int = 20,
+    ) -> List[TrademarkMatch]:
+        """Async search — returns matches without AI analysis."""
+        return await self.retriever.search_async(brand_name, nice_classes, limit)
+
     def search(
         self,
         brand_name: str,
         nice_classes: List[str] = None,
         limit: int = 20,
     ) -> List[TrademarkMatch]:
-        """Plain search — returns matches without AI analysis."""
+        """Sync search — returns matches without AI analysis."""
         return self.retriever.search(brand_name, nice_classes, limit)
 
     def _format_context(self, matches: List[TrademarkMatch]) -> str:
@@ -296,16 +297,22 @@ class TrademarkPipeline:
         parts = []
         for i, m in enumerate(matches, 1):
             nice_str = ", ".join(m.nice_classes) if m.nice_classes else "N/A"
-            parts.append(
-                f"[{i}] Nhãn hiệu: {m.brand_name}\n"
-                f"    Chủ sở hữu: {m.owner_name} ({m.owner_country})\n"
-                f"    Số đăng ký: {m.registration_number}\n"
-                f"    Nhóm Nice: {nice_str}\n"
-                f"    Loại: {m.ipr_type}\n"
-                f"    Nước đăng ký: {m.country_of_filing}\n"
-                f"    Trạng thái: {m.status}\n"
-                f"    Mức giống: {m.similarity_score:.0%} ({m.match_type})"
-            )
+            lines = [
+                f"[{i}] Nhãn hiệu: {m.brand_name}",
+                f"    Chủ sở hữu: {m.owner_name} ({m.owner_country})",
+                f"    Số đăng ký: {m.registration_number}",
+                f"    Số đơn: {m.application_number}" if m.application_number else None,
+                f"    ST13: {m.st13}" if m.st13 else None,
+                f"    Nhóm Nice: {nice_str}",
+                f"    Loại: {m.ipr_type or m.feature or 'N/A'}",
+                f"    Nước đăng ký: {m.country_of_filing or m.ip_office or 'N/A'}",
+                f"    Trạng thái: {m.status}",
+                f"    Ngày nộp đơn: {m.application_date}" if m.application_date else None,
+                f"    Ngày đăng ký: {m.registration_date}" if m.registration_date else None,
+                f"    Ngày hết hạn: {m.expiry_date}" if m.expiry_date else None,
+                f"    Mức giống: {m.similarity_score:.0%} ({m.match_type})",
+            ]
+            parts.append("\n".join(line for line in lines if line is not None))
         return "\n\n".join(parts)
 
     async def analyze_stream(
@@ -319,12 +326,8 @@ class TrademarkPipeline:
         SSE-compatible streaming: search trademarks + AI analysis.
         Yields text chunks for streaming response.
         """
-        import asyncio
-
-        # Retrieve matches (blocking → offload to thread)
-        matches = await asyncio.to_thread(
-            self.retriever.search, query, nice_classes, limit
-        )
+        # Retrieve matches (async directly)
+        matches = await self.retriever.search_async(query, nice_classes, limit)
 
         context = self._format_context(matches)
         history_text = format_history(history) if history else ""
