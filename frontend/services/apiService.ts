@@ -166,6 +166,26 @@ export const fetchSessions = async (): Promise<ApiSession[]> => {
   return response.json();
 };
 
+export const fetchAdminUsers = async (skip: number = 0, limit: number = 100) => {
+  const response = await fetch(`${API_BASE}/api/admin/users?skip=${skip}&limit=${limit}`, {
+    headers: authHeaders(),
+  });
+  if (response.status === 401) { handleUnauthorized(); throw new Error('Unauthorized'); }
+  if (response.status === 403) throw new Error('Forbidden');
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+  return await response.json();
+};
+
+export const fetchAdminSessions = async (skip: number = 0, limit: number = 100) => {
+  const response = await fetch(`${API_BASE}/api/admin/sessions?skip=${skip}&limit=${limit}`, {
+    headers: authHeaders(),
+  });
+  if (response.status === 401) { handleUnauthorized(); throw new Error('Unauthorized'); }
+  if (response.status === 403) throw new Error('Forbidden');
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+  return await response.json();
+};
+
 export const createSessionApi = async (title: string, mode: string): Promise<ApiSession> => {
   const response = await fetch(`${API_BASE}/api/sessions`, {
     method: 'POST',
@@ -216,6 +236,18 @@ export const saveMessage = async (
     body: JSON.stringify({ role, content, route_type: routeType || null }),
   });
   if (!response.ok) throw new Error('Không thể lưu tin nhắn');
+  return response.json();
+};
+
+// ── Admin APIs ──────────────────────────────────────
+
+export const fetchAdminStats = async (): Promise<any> => {
+  const response = await fetch(`${API_BASE}/api/admin/stats`, {
+    headers: authHeaders(),
+  });
+  if (response.status === 401) { handleUnauthorized(); throw new Error('Unauthorized'); }
+  if (response.status === 403) throw new Error('Forbidden');
+  if (!response.ok) throw new Error('Không thể tải admin stats');
   return response.json();
 };
 

@@ -1,17 +1,5 @@
-#!/usr/bin/env python3
-"""
-Master Pipeline — Chạy tất cả hoặc chọn pipeline.
 
-Usage:
-  python scripts/run_all_pipelines.py                                # legal + verdict
-  python scripts/run_all_pipelines.py --legal                        # chỉ legal
-  python scripts/run_all_pipelines.py --verdict                      # chỉ verdict
-  python scripts/run_all_pipelines.py --trademark -k "Samsung"       # chỉ trademark
-  python scripts/run_all_pipelines.py --all -k "Samsung" "Apple"     # tất cả
-  python scripts/run_all_pipelines.py --skip-chunk                   # skip chunk cho legal+verdict
-  python scripts/run_all_pipelines.py --skip-ingest                  # skip ingest cho tất cả
-"""
-import argparse
+mport argparse
 import subprocess
 import sys
 import time

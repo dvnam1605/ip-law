@@ -31,6 +31,7 @@ class TokenResponse(BaseModel):
 class UserRead(BaseModel):
     id: int
     username: str
+    is_admin: bool = False
     created_at: datetime
 
     class Config:

@@ -1,3 +1,4 @@
+import sqlalchemy
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import String, Text, ForeignKey, DateTime, Integer, Float, Index, Table, Column
@@ -17,6 +18,8 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    is_admin: Mapped[bool] = mapped_column(sqlalchemy.Boolean, default=False, server_default=sqlalchemy.text('false'))
 
     sessions: Mapped[list["ChatSession"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"

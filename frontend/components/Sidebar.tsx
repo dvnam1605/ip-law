@@ -16,7 +16,8 @@ import {
   Settings,
   Moon,
   Sun,
-  Search
+  Search,
+  LayoutDashboard
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -34,6 +35,7 @@ interface SidebarProps {
   isDarkMode: boolean;
   isMobileOpen: boolean;
   username: string;
+  isAdmin?: boolean;
   isDesktopOpen: boolean;
   toggleDesktopSidebar: () => void;
 }
@@ -53,6 +55,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   isDarkMode,
   isMobileOpen,
   username,
+  isAdmin,
   isDesktopOpen,
   toggleDesktopSidebar
 }) => {
@@ -145,6 +148,18 @@ const Sidebar: React.FC<SidebarProps> = ({
           <span>Tra cứu Nhãn hiệu</span>
         </button>
       </div>
+
+      {isAdmin && (
+        <div className="px-4 pb-2">
+          <a
+            href="/admin"
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-blue-400 hover:text-white hover:bg-blue-900/30 rounded-xl transition-colors font-medium"
+          >
+            <LayoutDashboard className="w-4 h-4" />
+            <span>Admin Dashboard</span>
+          </a>
+        </div>
+      )}
 
       {/* History List */}
       <div className="flex-1 overflow-y-auto dark-scrollbar px-3 py-2 pb-20">
