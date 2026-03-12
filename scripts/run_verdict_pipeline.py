@@ -20,9 +20,7 @@ from pathlib import Path
 
 # ── Ensure project root is importable ──────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 # Also add chunking dir for local imports (verdict_extractors, verdict_sections)
-sys.path.insert(0, str(PROJECT_ROOT / "chunking"))
 os.chdir(PROJECT_ROOT)
 
 # ── Paths ──────────────────────────────────────────────
@@ -36,7 +34,7 @@ EMBEDDINGS_JSON = PROJECT_ROOT / "chunking" / "verdict_chunks_with_embeddings.js
 # ═══════════════════════════════════════════════════════
 def run_chunking():
     """Chunk verdict TXT files and generate embeddings."""
-    from chunking.verdict_chunker import (
+    from backend.chunking.verdict_chunker import (
         chunk_all_verdicts, generate_embeddings,
         export_json, export_with_embeddings,
     )
@@ -67,7 +65,7 @@ def run_chunking():
 # ═══════════════════════════════════════════════════════
 def run_ingest():
     """Ingest verdict chunks + embeddings into Neo4j."""
-    from utils.verdict_neo4j_ingest import (
+    from backend.utils.verdict_neo4j_ingest import (
         Neo4jClient, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
         setup_schema, load_chunks, ingest_verdicts, ingest_verdict_chunks,
         create_next_relationships, create_semantic_relationships,

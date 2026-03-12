@@ -20,7 +20,7 @@ from pathlib import Path
 
 # ── Ensure project root is importable ──────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+# sys.path no longer needed
 os.chdir(PROJECT_ROOT)
 
 # ── Paths ──────────────────────────────────────────────
@@ -35,7 +35,7 @@ EMBEDDINGS_JSON = PROJECT_ROOT / "chunking" / "chunks_output_v2_with_embeddings.
 # ═══════════════════════════════════════════════════════
 def run_chunking():
     """Chunk legal TXT files and generate embeddings."""
-    from chunking.legal_chunker_v2 import (
+    from backend.chunking.legal_chunker_v2 import (
         EmbeddingModel, process_txt_v2, analyze_chunks, print_analysis,
     )
 
@@ -87,7 +87,7 @@ def run_chunking():
 # ═══════════════════════════════════════════════════════
 def run_ingest():
     """Ingest chunks + embeddings into Neo4j."""
-    from utils.neo4j_ingest import (
+    from backend.utils.neo4j_ingest import (
         Neo4jClient, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_AVAILABLE,
         setup_schema, load_chunks, ingest_documents, ingest_chunks,
         create_next_relationships, setup_vector_index, ingest_embeddings,

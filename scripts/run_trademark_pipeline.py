@@ -23,7 +23,7 @@ from pathlib import Path
 
 # ── Ensure project root is importable ──────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+# sys.path no longer needed
 os.chdir(PROJECT_ROOT)
 
 # ── Paths ──────────────────────────────────────────────
@@ -35,7 +35,7 @@ CRAWL_OUTPUT_DIR = PROJECT_ROOT / "data" / "trademarks"
 # ═══════════════════════════════════════════════════════
 async def run_crawl(keywords: list, country: str, pages: int, output_file: str) -> str:
     """Crawl trademarks from WIPO Brand DB."""
-    from utils.trademark_crawler import WIPOBrandDBCrawler
+    from backend.utils.trademark_crawler import WIPOBrandDBCrawler
 
     print("=" * 60)
     print("🌐 STEP 1: CRAWL WIPO BRAND DB")
@@ -61,7 +61,7 @@ async def run_crawl(keywords: list, country: str, pages: int, output_file: str) 
 # ═══════════════════════════════════════════════════════
 def run_ingest(input_file: str, batch_size: int = 50):
     """Ingest crawled trademarks into Neo4j."""
-    from utils.trademark_neo4j_ingest import TrademarkNeo4jIngestor
+    from backend.utils.trademark_neo4j_ingest import TrademarkNeo4jIngestor
 
     print("\n" + "=" * 60)
     print("🗄️  STEP 2: NEO4J TRADEMARK INGEST")

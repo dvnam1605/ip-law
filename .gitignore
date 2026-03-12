@@ -81,12 +81,21 @@ Thumbs.db
 # ========================
 *.pdf
 *.docx
+
+# Data directories (large files)
+data/raw/
+data/processed/
+data/models/
+data/trademarks/
+
+# Legacy directories (pre-refactor)
 output/
 output-ban-an/
+ban-an/
+tai_lieu_phap_luat/
 vietnamese_embedding/
 
 # Docker
-*.log
 docker-compose.override.yml
 
 # Secrets / Credentials
@@ -94,4 +103,3 @@ docker-compose.override.yml
 *.key
 secrets/
 .agents
-data/
