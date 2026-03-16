@@ -1,32 +1,47 @@
 # 🏛️ Legal RAG Chatbot - Tư vấn Pháp luật Việt Nam
 
-Hệ thống RAG (Retrieval-Augmented Generation) cho tư vấn pháp luật sở hữu trí tuệ Việt Nam, sử dụng Neo4j Graph Database và Gemini AI.
+Hệ thống RAG (Retrieval-Augmented Generation) cho tư vấn pháp luật và bản án sở hữu trí tuệ Việt Nam. Hệ thống sử dụng kiến trúc lai (Hybrid Architecture) kết hợp **Qdrant** (Vector Search) và **Neo4j** (Graph Database) cùng với Gemini AI.
 
 ## 📁 Cấu trúc dự án
 
-```
+```text
 shtt/
-├── api/                    # FastAPI application
-│   └── main.py             # API endpoints
-├── core/                   # Core business logic
-│   └── rag_pipeline.py     # RAG pipeline với Gemini
-├── utils/                  # Utilities
-│   ├── neo4j_retriever.py  # Neo4j vector search
-│   ├── neo4j_ingest.py     # Ingest data vào Neo4j
-│   └── pdf_to_txt.py       # Convert PDF to text
-├── chunking/               # Document processing
-│   ├── legal_chunker.py    # Chunking logic v1
-│   └── legal_chunker_v2.py # Chunking logic v2
-├── vietnamese_embedding/   # Embedding model (gitignored)
-├── tai_lieu_phap_luat/     # Source legal documents
-├── docker-compose.yml      # Neo4j container
-├── requirements.txt        # Python dependencies
-└── .env                    # Environment variables
+├── backend/
+│   ├── api/                    # FastAPI application
+│   │   └── main.py             # API endpoints
+│   ├── core/                   # Core business logic (RAG pipelines, Routers)
+│   ├── utils/                  # Utilities
+│   │   ├── qdrant_retriever.py # Shared Qdrant vector search
+│   │   ├── neo4j_retriever.py  # Pháp luật: Neo4j context + metadata
+│   │   └── verdict_neo4j_retriever.py # Bản án: Neo4j context + metadata
+│   ├── chunking/               # Document processing & Upload
+│   │   ├── legal_chunker.py    # Chunking & Embedding pháp luật
+│   │   ├── verdict_chunker.py  # Chunking & Embedding bản án
+│   │   └── verdict_extractors.py # Trích xuất metadata bản án
+├── frontend/                   # React + Vite Chat App UI
+├── data/
+│   ├── models/                 # Vietnamese embedding model
+│   └── processed/              # Source legal & verdict TXT files
+├── scripts/                    # Pipeline runners
+│   ├── run_legal_pipeline.py   # Chạy pipeline pháp luật
+│   └── run_verdict_pipeline.py # Chạy pipeline bản án
+├── docker-compose.yml          # Neo4j, Qdrant, PostgreSQL
+├── requirements.txt            # Python dependencies cho Backend
+├── package.json                # Node dependencies cho Frontend
+└── .env                        # Environment variables
 ```
 
 ## 🚀 Cài đặt
 
-### 1. Clone và cài đặt dependencies
+### 1. Khởi động các Database (Neo4j, Qdrant, Postgres)
+
+```bash
+docker-compose up -d
+```
+- Qdrant Dashboard: http://localhost:6333/dashboard
+- Neo4j Browser: http://localhost:7474
+
+### 2. Cài đặt Backend
 
 ```bash
 # Tạo môi trường conda
@@ -37,143 +52,96 @@ conda activate shtt
 pip install -r requirements.txt
 ```
 
-### 2. Cấu hình environment variables
+### 3. Cài đặt Frontend
 
-Tạo file `.env`:
+```bash
+cd frontend
+npm install
+```
+
+### 4. Cấu hình environment variables
+
+Tạo file `.env` tại thư mục gốc:
 
 ```env
+NEO4J_URI=bolt://127.0.0.1:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_password
 GEMINI_API_KEY=your_gemini_api_key
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=legal_rag
 ```
 
-### 3. Khởi động Neo4j
+## 🔄 Data Pipeline (Hybrid Architecture)
+
+Quy trình nhập dữ liệu (Ingestion) được chia thành 2 bước để tận dụng sức mạnh của cả Qdrant và Neo4j:
+
+### Chạy các scripts tự động
 
 ```bash
-docker-compose up -d
+# 1. Pipeline cho Pháp luật
+python scripts/run_legal_pipeline.py
+
+# 2. Pipeline cho Bản án
+python scripts/run_verdict_pipeline.py
 ```
 
-Neo4j Browser: http://localhost:7474
+### Luồng xử lý chi tiết (Bên trong scripts):
+1. **Chunking & Embedding (Qdrant)**
+   - Đọc files TXT, chia chunk (Rule-based cho luật, NLP cho bản án).
+   - Tạo embedding (độ dài 1024) bằng mô hình tiếng Việt.
+   - Upload trực tiếp vector lên **Qdrant** cùng ID của chunk (`chunk_id`).
+   - Lưu metadata ra file JSON làm đầu vào cho bước 2.
+2. **Graph Ingestion (Neo4j)**
+   - Lấy metadata và danh sách IDs từ JSON ở bước 1.
+   - Tạo nodes (Document, Verdict, Chunk) vào Neo4j (nhưng **không lưu embedding** để giảm tải dung lượng).
+   - Khởi tạo các relationships (thứ tự chunk `NEXT`, quan hệ `PART_OF`, v.v.).
 
-### 4. Chuẩn bị Embedding Model
+## 🔍 Hybrid RAG Pipeline Flow
 
-Download Vietnamese embedding model vào thư mục `vietnamese_embedding/`.
+Khi User hỏi một câu hỏi:
+
+```text
+1. User Query
+       ↓
+2. Neo4j Pre-filter (Chỉ lấy IDs của các chunks thuộc các documents hợp lệ: status=active, năm ban hành...)
+       ↓
+3. Qdrant Vector Search (ANN Search cực nhanh chỉ trên các list ID đã filter từ bước 2)
+       ↓
+4. Neo4j Context Expansion (Lấy chunk_ids trả về từ Qdrant, vào lại Neo4j lấy FULL_TEXT của chunk + các chunks lân cận (NEXT/PREV) để mở rộng ngữ cảnh)
+       ↓
+5. LLM Synthesis (Gửi cho Gemini AI kèm Lịch sử Chat)
+       ↓
+6. Response Streaming (Frontend render chữ theo dạng stream)
+```
 
 ## 🔧 Chạy ứng dụng
 
-### Chạy API Server
-
+### 1. Chạy Backend (API Server)
 ```bash
-# Từ thư mục gốc
-cd /path/to/shtt
+cd backend/api
 conda activate shtt
-python -m api.main
-
-# Hoặc với uvicorn trực tiếp
-uvicorn api.main:app --host 0.0.0.0 --port 1605 --reload
+python app.py
 ```
-
 API Documentation: http://localhost:1605/docs
 
-### API Endpoints
-
-| Method | Endpoint | Mô tả |
-|--------|----------|-------|
-| GET | `/` | Health check |
-| GET | `/health` | Health check |
-| POST | `/api/query` | Truy vấn pháp luật |
-| GET | `/api/query?q=...` | Truy vấn (GET method) |
-
-### Ví dụ Request
-
+### 2. Chạy Frontend (Chat UI)
 ```bash
-# POST request
-curl -X POST "http://localhost:1605/api/query" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "Điều kiện đăng ký nhãn hiệu ở Việt Nam?",
-    "top_k": 5
-  }'
-
-# GET request
-curl "http://localhost:1605/api/query?q=Điều%20kiện%20bảo%20hộ%20quyền%20tác%20giả&top_k=5"
+cd frontend
+npm run dev
 ```
+Giao diện ứng dụng: http://localhost:5173
 
-### Response Format
-
-```json
-{
-  "success": true,
-  "query": "Điều kiện đăng ký nhãn hiệu ở Việt Nam?",
-  "answer": "Theo Điều 87 - Luật Sở Hữu Trí Tuệ (Số văn bản: 50/2005/QH11)...",
-  "sources": [
-    {
-      "doc_name": "Luật Sở Hữu Trí Tuệ",
-      "doc_type": "Luật",
-      "doc_number": "50/2005/QH11",
-      "dieu": "Điều 87",
-      "dieu_title": "Quyền đăng ký nhãn hiệu",
-      "score": 0.8293
-    }
-  ],
-  "retrieved_chunks": 5,
-  "processing_time_ms": 1234.56
-}
-```
-
-## 📊 Data Pipeline
-
-### 1. Ingest Documents
-
-```bash
-# Convert PDF to text
-python utils/pdf_to_txt.py
-
-# Chunking documents
-python chunking/legal_chunker_v2.py
-
-# Ingest vào Neo4j
-python utils/neo4j_ingest.py
-```
-
-### 2. Graph Schema
-
-```
-(:Document {doc_id, doc_name, doc_type, doc_number, effective_date, status})
-    ↑
-[:PART_OF]
-    │
-(:Chunk {chunk_id, content, dieu, dieu_title, chuong, embedding})
-    │
-[:NEXT]
-    ↓
-(:Chunk ...)
-```
-
-## 🔍 RAG Pipeline Flow
-
-```
-1. User Query
-       ↓
-2. Cypher Filter (status=active, effective_date)
-       ↓
-3. Vector Search (Neo4j + Embedding)
-       ↓
-4. Context Expansion (NEXT relationship)
-       ↓
-5. Gemini Generation
-       ↓
-6. Response với Source Citations
-```
-
-## ⚙️ Configuration
+## ⚙️ Cấu hình Backend
 
 | Variable | Default | Mô tả |
 |----------|---------|-------|
 | `GEMINI_API_KEY` | - | API key cho Gemini |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Model Gemini |
-| `TOP_K_RETRIEVAL` | `5` | Số lượng chunks retrieve |
-| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection |
+| `NEO4J_URI` | `bolt://127.0.0.1:7687` | Kết nối Neo4j |
+| `QDRANT_URL` | `http://192.168.1.199:6333`| Kết nối Qdrant |
+| `QDRANT_LEGAL_COLLECTION` | `legal_chunks` | Tên collection pháp luật trong Qdrant |
+| `QDRANT_VERDICT_COLLECTION` | `verdict_chunks` | Tên collection bản án trong Qdrant |
 
 ## 📝 License
 
