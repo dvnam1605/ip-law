@@ -192,29 +192,9 @@ def create_semantic_relationships(client: Neo4jClient):
 
 
 def ingest_embeddings(client: Neo4jClient, filepath: str, batch_size: int = 50):
-    if not os.path.exists(filepath):
-        print(f"⚠️ Embeddings file not found: {filepath}")
-        return
-
-    with open(filepath, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-
-    embedding_data = []
-    for item in data:
-        if 'embedding' not in item or 'metadata' not in item:
-            continue
-        meta = item['metadata']
-        verdict_id = meta.get('case_number') or meta.get('filename', '')
-        vchunk_id = _generate_vchunk_id(item.get('content', ''), verdict_id, meta.get('chunk_index', 0))
-        embedding_data.append({'vchunk_id': vchunk_id, 'embedding': item['embedding']})
-
-    for i in range(0, len(embedding_data), batch_size):
-        client.run_write("""
-        UNWIND $data AS item
-        MATCH (vc:VerdictChunk {vchunk_id: item.vchunk_id})
-        SET vc.embedding = item.embedding
-        """, {'data': embedding_data[i:i + batch_size]})
-    print(f"  ✓ {len(embedding_data)} embeddings ingested")
+    """Legacy: embeddings now stored in Qdrant. Kept for backward compat."""
+    print(f"  ⏭ Skipping embedding ingest (embeddings stored in Qdrant)")
+    return
 
 
 def print_stats(client: Neo4jClient):

@@ -16,7 +16,7 @@ except ImportError:
 
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "aa")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "dvnam1605")
 
 CHUNKS_JSON = "./chunks_output_v2.json"
 EMBEDDINGS_JSON = "./chunks_output_v2_with_embeddings.json"
@@ -276,42 +276,9 @@ def create_next_relationships(client: Neo4jClient):
 
 
 def ingest_embeddings(client: Neo4jClient, embeddings_file: str, batch_size: int = 50):
-    if not os.path.exists(embeddings_file):
-        print(f"⚠️ Embeddings file not found: {embeddings_file}")
-        return
-    
-    print(f"\n🔢 Ingesting embeddings from {embeddings_file}...")
-    
-    with open(embeddings_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    
-    embedding_data = []
-    for item in data:
-        if 'embedding' in item and 'metadata' in item:
-            meta = item['metadata']
-            doc_id = meta.get('doc_number', meta.get('title', ''))
-            chunk_index = meta.get('chunk_index', 0)
-            chunk_id = generate_chunk_id(item.get('content', ''), doc_id, chunk_index)
-            
-            embedding_data.append({
-                'chunk_id': chunk_id,
-                'embedding': item['embedding']
-            })
-    
-    if not embedding_data:
-        print("  ⚠️ No embeddings found in file")
-        return
-    
-    query = """
-    UNWIND $data AS item
-    MATCH (c:Chunk {chunk_id: item.chunk_id})
-    SET c.embedding = item.embedding
-    """
-    
-    for i in range(0, len(embedding_data), batch_size):
-        batch = embedding_data[i:i+batch_size]
-        client.run_write(query, {'data': batch})
-        print(f"  ✓ Updated {min(i+batch_size, len(embedding_data))}/{len(embedding_data)} embeddings")
+    """Legacy: embeddings now stored in Qdrant. Kept for backward compat."""
+    print(f"\n⏭ Skipping embedding ingest (embeddings stored in Qdrant)")
+    return
 
 
 def print_query_examples():

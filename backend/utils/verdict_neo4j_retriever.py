@@ -3,7 +3,8 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
 from neo4j import GraphDatabase
-from sentence_transformers import SentenceTransformer
+
+from backend.utils.qdrant_retriever import QdrantSearchClient, VERDICT_COLLECTION
 
 SECTION_BOOSTS = {
     'reasoning': 1.3,
@@ -67,30 +68,29 @@ class RetrievedVerdictChunk:
 
 
 class Neo4jVerdictRetriever:
-    """Verdict retriever with vector search, section boosting, and context expansion."""
+    """Hybrid retriever: Qdrant vector search + Neo4j context expansion."""
 
-    def __init__(self, uri=None, user=None, password=None, embedding_model_path=None):
+    def __init__(self, uri=None, user=None, password=None,
+                 embedding_model_path=None, qdrant_url=None):
         self.uri = uri or os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
         self.user = user or os.getenv("NEO4J_USER", "neo4j")
         self.password = password or os.getenv("NEO4J_PASSWORD", "dvnam1605")
         self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
 
-        self.embedding_model = None
-        if embedding_model_path:
-            print(f"Loading verdict embedding model from {embedding_model_path}...")
-            self.embedding_model = SentenceTransformer(embedding_model_path)
+        # Qdrant client for vector search
+        self.qdrant = QdrantSearchClient(
+            url=qdrant_url,
+            embedding_model_path=embedding_model_path
+        )
+        self.embedding_model = self.qdrant.embedding_model
 
     def close(self):
         self.driver.close()
+        self.qdrant.close()
 
     def _run_query(self, query: str, params: Dict = None) -> List[Dict]:
         with self.driver.session() as session:
             return [r.data() for r in session.run(query, params or {})]
-
-    def _encode(self, query: str) -> List[float]:
-        if not self.embedding_model:
-            raise ValueError("Embedding model not loaded")
-        return self.embedding_model.encode(query).tolist()
 
     def search(
         self,
@@ -126,7 +126,6 @@ class Neo4jVerdictRetriever:
         return results
 
     def _ensure_key_sections(self, results: List[RetrievedVerdictChunk]) -> List[RetrievedVerdictChunk]:
-        """Ensure reasoning + decision chunks are included for each verdict in results."""
         if not results:
             return results
 
@@ -185,35 +184,48 @@ class Neo4jVerdictRetriever:
         """
         return [r["vchunk_id"] for r in self._run_query(query, params)]
 
-    def _vector_search(self, query: str, candidate_ids: List[str], top_k: int) -> List[RetrievedVerdictChunk]:
-        query_embedding = self._encode(query)
-        cypher = f"""
-        UNWIND $candidate_ids AS cid
-        MATCH (vc:VerdictChunk {{vchunk_id: cid}})-[:PART_OF_VERDICT]->(v:Verdict)
-        WHERE vc.embedding IS NOT NULL
-        WITH vc, v,
-             reduce(dot = 0.0, i IN range(0, size(vc.embedding)-1) |
-                    dot + vc.embedding[i] * $qe[i]) AS dot_product,
-             reduce(nc = 0.0, i IN range(0, size(vc.embedding)-1) |
-                    nc + vc.embedding[i] * vc.embedding[i]) AS nc,
-             reduce(nq = 0.0, i IN range(0, size($qe)-1) |
-                    nq + $qe[i] * $qe[i]) AS nq
-        WITH vc, v, dot_product / (sqrt(nc) * sqrt(nq)) AS score
-        ORDER BY score DESC
-        LIMIT $top_k
-        {_RETURN_CLAUSE}
-        """
+    def _vector_search(self, query: str, candidate_ids: List[str],
+                       top_k: int) -> List[RetrievedVerdictChunk]:
+        """Vector search via Qdrant, then fetch metadata from Neo4j."""
+        query_embedding = self.qdrant.encode(query)
+
         try:
-            results = self._run_query(cypher, {
-                "candidate_ids": candidate_ids, "qe": query_embedding, "top_k": top_k,
-            })
+            qdrant_results = self.qdrant.search(
+                collection=VERDICT_COLLECTION,
+                query_embedding=query_embedding,
+                id_field="vchunk_id",
+                candidate_ids=candidate_ids,
+                top_k=top_k,
+            )
         except Exception as e:
-            print(f"⚠️ Vector search failed: {e}, falling back to keyword search")
+            print(f"⚠️ Qdrant search failed: {e}, falling back to keyword search")
             return self._keyword_search(query, candidate_ids, top_k)
 
-        return [RetrievedVerdictChunk.from_record(r) for r in results]
+        if not qdrant_results:
+            return self._keyword_search(query, candidate_ids, top_k)
 
-    def _keyword_search(self, query: str, candidate_ids: List[str], top_k: int) -> List[RetrievedVerdictChunk]:
+        # Map vchunk_ids back to Neo4j for full metadata
+        vchunk_ids = [vid for vid, _ in qdrant_results]
+        score_map = {vid: score for vid, score in qdrant_results}
+
+        cypher = f"""
+        UNWIND $vchunk_ids AS vid
+        MATCH (vc:VerdictChunk {{vchunk_id: vid}})-[:PART_OF_VERDICT]->(v:Verdict)
+        WITH vc, v, 0.0 AS score
+        {_RETURN_CLAUSE}
+        """
+
+        results = self._run_query(cypher, {"vchunk_ids": vchunk_ids})
+        chunks = []
+        for r in results:
+            chunk = RetrievedVerdictChunk.from_record(r)
+            chunk.score = score_map.get(r["vchunk_id"], 0)
+            chunks.append(chunk)
+
+        return chunks
+
+    def _keyword_search(self, query: str, candidate_ids: List[str],
+                        top_k: int) -> List[RetrievedVerdictChunk]:
         keywords = [w.lower() for w in query.split() if len(w) > 2]
         if not keywords:
             return []

@@ -71,8 +71,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ user, onLogoutUser, onUserChange }) =
     scrollToBottom();
   }, [sessions, currentSessionId, isLoading]);
 
+  // Add a ref to prevent double fetch in strict mode
+  const initializedRef = useRef(false);
+
   // Auto-load on mount
   useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
     loadSessions(user);
   }, []);
 

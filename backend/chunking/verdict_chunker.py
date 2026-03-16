@@ -1,5 +1,6 @@
 import os
 import json
+import hashlib
 from pathlib import Path
 from typing import List, Dict
 from dataclasses import dataclass, asdict, field
@@ -7,7 +8,10 @@ from dataclasses import dataclass, asdict, field
 from sentence_transformers import SentenceTransformer
 import torch
 
-from verdict_extractors import (
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct
+
+from backend.chunking.verdict_extractors import (
     clean_ocr_artifacts,
     extract_case_number, extract_case_number_from_filename,
     extract_court_name, extract_judgment_date,
@@ -16,7 +20,7 @@ from verdict_extractors import (
     detect_ip_types, extract_law_references,
     generate_summary,
 )
-from verdict_sections import (
+from backend.chunking.verdict_sections import (
     macro_chunk,
     micro_chunk_noi_dung,
     micro_chunk_nhan_dinh,
@@ -25,12 +29,14 @@ from verdict_sections import (
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+QDRANT_URL = os.getenv("QDRANT_URL", "http://192.168.1.199:6333")
+VERDICT_COLLECTION = os.getenv("QDRANT_VERDICT_COLLECTION", "verdict_chunks")
+
 EMBEDDING_MODEL_PATH = str(Path(__file__).resolve().parent.parent.parent / "data" / "models" / "vietnamese_embedding")
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SCRIPT_DIR)
 TXT_FOLDER = os.path.join(_PROJECT_DIR, "output-ban-an")
 OUTPUT_JSON = os.path.join(_SCRIPT_DIR, "verdict_chunks.json")
-OUTPUT_WITH_EMBEDDINGS = os.path.join(_SCRIPT_DIR, "verdict_chunks_with_embeddings.json")
 
 
 @dataclass
@@ -138,6 +144,12 @@ def chunk_all_verdicts(folder: str) -> List[VerdictChunk]:
     return all_chunks
 
 
+def _generate_vchunk_id(content: str, verdict_id: str, chunk_index: int) -> str:
+    """Must match verdict_neo4j_ingest.py's logic for consistent mapping."""
+    hash_input = f"v_{verdict_id}_{chunk_index}_{content[:100]}"
+    return "v_" + hashlib.md5(hash_input.encode()).hexdigest()[:16]
+
+
 def generate_embeddings(chunks: List[VerdictChunk]) -> List[Dict]:
     print(f"\n🔢 Generating embeddings on {DEVICE}...")
     model = SentenceTransformer(EMBEDDING_MODEL_PATH, device=DEVICE)
@@ -163,11 +175,55 @@ def export_json(chunks: List[VerdictChunk], path: str):
     print(f"💾 Exported {len(data)} chunks → {path}")
 
 
-def export_with_embeddings(data: List[Dict], path: str):
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False)
-    size_mb = Path(path).stat().st_size / (1024 * 1024)
-    print(f"💾 Exported {len(data)} chunks with embeddings → {path} ({size_mb:.1f} MB)")
+class QdrantVerdictStorage:
+    def __init__(self, url: str, collection_name: str, vector_size: int = 1024):
+        self.client = QdrantClient(url=url)
+        self.collection_name = collection_name
+        self.vector_size = vector_size
+        self._ensure_collection()
+
+    def _ensure_collection(self):
+        collections = self.client.get_collections().collections
+        exists = any(c.name == self.collection_name for c in collections)
+        if not exists:
+            print(f"Creating collection '{self.collection_name}'...")
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=VectorParams(
+                    size=self.vector_size,
+                    distance=Distance.COSINE
+                )
+            )
+            print(f"✓ Collection created (dim={self.vector_size})")
+        else:
+            print(f"⏭ Collection '{self.collection_name}' already exists")
+
+    def upsert_results(self, results: List[Dict], start_id: int = 0):
+        """Upsert embedding results directly to Qdrant."""
+        points = []
+        for i, r in enumerate(results):
+            meta = r["metadata"]
+            verdict_id = meta.get("case_number") or meta.get("filename", "")
+            vchunk_id = _generate_vchunk_id(r["content"], verdict_id, meta.get("chunk_index", 0))
+
+            payload = {"vchunk_id": vchunk_id, **meta}
+            point = PointStruct(
+                id=start_id + i,
+                vector=r["embedding"],
+                payload=payload
+            )
+            points.append(point)
+
+        batch_size = 100
+        for i in range(0, len(points), batch_size):
+            batch = points[i:i + batch_size]
+            self.client.upsert(
+                collection_name=self.collection_name,
+                points=batch
+            )
+            print(f"  ✓ Uploaded {min(i+batch_size, len(points))}/{len(points)} points")
+
+        return len(points)
 
 
 def main():
@@ -176,9 +232,15 @@ def main():
         print("❌ No chunks generated!")
         return
 
+    # Save metadata-only JSON (for Neo4j ingest)
     export_json(chunks, OUTPUT_JSON)
+
+    # Generate embeddings and upload to Qdrant directly
     data = generate_embeddings(chunks)
-    export_with_embeddings(data, OUTPUT_WITH_EMBEDDINGS)
+    print(f"\n🔄 Uploading to Qdrant ({QDRANT_URL})...")
+    storage = QdrantVerdictStorage(QDRANT_URL, VERDICT_COLLECTION)
+    count = storage.upsert_results(data)
+    print(f"✅ Uploaded {count} vectors to Qdrant collection '{VERDICT_COLLECTION}'")
     print("✅ Done!")
 
 
