@@ -52,7 +52,6 @@ class WIPOAllVNCrawler:
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
 
-    # ── Browser lifecycle ──────────────────────────────
 
     async def _init_browser(self):
         self._pw = await async_playwright().start()
@@ -70,7 +69,6 @@ class WIPOAllVNCrawler:
         if self._pw:
             await self._pw.stop()
 
-    # ── CAPTCHA & IP Office ────────────────────────────
 
     async def _bypass_captcha(self):
         """Load WIPO & chờ altcha auto-solve."""
@@ -107,7 +105,6 @@ class WIPOAllVNCrawler:
         else:
             raise RuntimeError("Cannot find VN in IP office autocomplete")
 
-    # ── Search & Count ─────────────────────────────────
 
     async def _search_and_count(self, prefix: str) -> int:
         """Fill brand name, click Search, trả về tổng số kết quả."""
@@ -142,7 +139,6 @@ class WIPOAllVNCrawler:
         logger.info(f"  prefix='{prefix}' → {count:,} results")
         return count
 
-    # ── Excel Download ─────────────────────────────────
 
     async def _download_excel(self, prefix: str) -> Optional[Path]:
         """Download Excel cho kết quả hiện tại, trả về path."""
@@ -175,7 +171,6 @@ class WIPOAllVNCrawler:
             logger.error(f"  Download failed for '{prefix}': {e}")
             return None
 
-    # ── Navigation helpers ─────────────────────────────
 
     async def _go_back_to_search(self):
         """Quay lại trang search sau khi xem results."""
@@ -189,7 +184,6 @@ class WIPOAllVNCrawler:
             await asyncio.sleep(8)
             await self._set_ip_office_vn()
 
-    # ── State management ───────────────────────────────
 
     @staticmethod
     def _load_state() -> dict:
@@ -204,7 +198,6 @@ class WIPOAllVNCrawler:
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
 
-    # ── Main crawl loop ────────────────────────────────
 
     async def crawl_all_vn(self, resume: bool = True, max_depth: int = MAX_PREFIX_DEPTH):
         """
@@ -321,7 +314,6 @@ class WIPOAllVNCrawler:
                      f"{len(skipped)} skipped (0 results), "
                      f"{len(state.get('failed', []))} failed")
 
-    # ── Quick count ────────────────────────────────────
 
     async def count_all_prefixes(self):
         """Đếm nhanh số kết quả cho mỗi prefix đơn để ước lượng tổng."""
@@ -352,7 +344,6 @@ class WIPOAllVNCrawler:
             await self._close()
 
 
-# ── CLI ────────────────────────────────────────────────
 
 async def main():
     import argparse

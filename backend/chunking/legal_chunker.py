@@ -32,7 +32,6 @@ TXT_FOLDER = "/home/namdv/shtt/data/processed/phap-luat"
 OUTPUT_JSON = "./chunks_output_v2.json"
 
 
-# ── Data Classes ──────────────────────────────────────────
 
 @dataclass
 class DocumentMetadata:
@@ -62,11 +61,7 @@ class Chunk:
     content: str
     metadata: DocumentMetadata
 
-
-# ── Helpers ───────────────────────────────────────────────
-
 def generate_chunk_id(content: str, doc_id: str, chunk_index: int) -> str:
-    """Must match neo4j_ingest.py's logic for consistent mapping."""
     hash_input = f"{doc_id}_{chunk_index}_{content[:100]}"
     return hashlib.md5(hash_input.encode()).hexdigest()[:16]
 
@@ -98,7 +93,6 @@ def remove_page_numbers(text: str) -> str:
     return '\n'.join(cleaned_lines)
 
 
-# ── Metadata Extraction (v2) ─────────────────────────────
 
 def extract_doc_type(filename: str, content: str) -> str:
     filename_lower = filename.lower()
@@ -224,8 +218,6 @@ def extract_effective_date(content: str, signing_date: Optional[str] = None) -> 
     return None
 
 
-# ── Dieu / Chunk Type Detection (v2) ─────────────────────
-
 def extract_dieu_info(text: str, previous_dieu: Optional[str] = None,
                       previous_dieu_title: Optional[str] = None) -> Tuple[Optional[str], Optional[str], bool]:
     text_stripped = text.strip()
@@ -296,7 +288,6 @@ def detect_chunk_type(text: str, chunk_index: int, total_chunks: int) -> str:
     return "content"
 
 
-# ── Chunking (v2 logic) ──────────────────────────────────
 
 def chunk_by_dieu(content: str, base_metadata: DocumentMetadata) -> List[Chunk]:
     chunks = []
@@ -382,7 +373,6 @@ def chunk_by_dieu(content: str, base_metadata: DocumentMetadata) -> List[Chunk]:
     return chunks
 
 
-# ── Embedding Model (v2 with CUDA) ───────────────────────
 
 class EmbeddingModel:
     def __init__(self, model_path: str, device: str = None):
@@ -405,7 +395,6 @@ class EmbeddingModel:
         return self.model.get_sentence_embedding_dimension()
 
 
-# ── Qdrant Storage ───────────────────────────────────────
 
 class QdrantStorage:
     def __init__(self, url: str, collection_name: str, vector_size: int):
@@ -458,7 +447,6 @@ class QdrantStorage:
         return len(points)
 
 
-# ── Analysis ─────────────────────────────────────────────
 
 def analyze_chunks(chunks_data: List[Dict]) -> Dict:
     total = len(chunks_data)
@@ -497,7 +485,6 @@ def print_analysis(stats: Dict):
         print(f"  {dtype:20} : {count:4}")
 
 
-# ── Process Single File ──────────────────────────────────
 
 def process_txt(txt_path: str, embedding_model: EmbeddingModel) -> List[Dict]:
     filename = Path(txt_path).name
@@ -556,7 +543,6 @@ def process_txt(txt_path: str, embedding_model: EmbeddingModel) -> List[Dict]:
     return results
 
 
-# ── Main ─────────────────────────────────────────────────
 
 def main():
     print("="*60)

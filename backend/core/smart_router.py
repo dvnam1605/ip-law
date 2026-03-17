@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Literal
 from pathlib import Path
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
+from backend.core.config import config
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
@@ -11,7 +12,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 from google import genai
 from google.genai import types
 
-from backend.core.rag_pipeline import format_history
+from backend.core.pipeline.rag_pipeline import format_history
 
 RouteType = Literal['legal', 'verdict', 'combined', 'trademark']
 
@@ -133,16 +134,16 @@ class SmartRouter:
     def __init__(self):
         if self._initialized:
             return
-        from backend.core.rag_pipeline import get_pipeline
-        from backend.core.verdict_rag_pipeline import get_verdict_pipeline
-        from backend.core.trademark_pipeline import get_trademark_pipeline
+        from backend.core.pipeline.rag_pipeline import get_pipeline
+        from backend.core.pipeline.verdict_rag_pipeline import get_verdict_pipeline
+        from backend.core.pipeline.trademark_pipeline import get_trademark_pipeline
 
         self.legal_pipeline = get_pipeline()
         self.verdict_pipeline = get_verdict_pipeline()
         self.trademark_pipeline = get_trademark_pipeline()
 
-        api_key = os.getenv("GEMINI_API_KEY")
-        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        api_key = os.getenv("GEMINI_API_KEY") or config.GEMINI_API_KEY
+        model_name = os.getenv("GEMINI_MODEL") or config.GEMINI_MODEL
         self.client = genai.Client(api_key=api_key)
         self.combined_model_name = model_name
         self.combined_system_instruction = COMBINED_SYSTEM_PROMPT

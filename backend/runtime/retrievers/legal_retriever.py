@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, date
 from dataclasses import dataclass
 import numpy as np
+from backend.core.config import config
 
 try:
     from neo4j import GraphDatabase
@@ -10,7 +11,7 @@ try:
 except ImportError:
     NEO4J_AVAILABLE = False
 
-from backend.utils.qdrant_retriever import QdrantSearchClient, LEGAL_COLLECTION
+from backend.runtime.retrievers.qdrant import QdrantSearchClient, LEGAL_COLLECTION
 
 
 @dataclass
@@ -48,9 +49,9 @@ class Neo4jLegalRetriever:
         if not NEO4J_AVAILABLE:
             raise ImportError("neo4j package required: pip install neo4j")
 
-        self.uri = uri or os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
-        self.user = user or os.getenv("NEO4J_USER", "neo4j")
-        self.password = password or os.getenv("NEO4J_PASSWORD", "dvnam1605")
+        self.uri = uri or os.getenv("NEO4J_URI") or config.NEO4J_URI
+        self.user = user or os.getenv("NEO4J_USER") or config.NEO4J_USER
+        self.password = password or os.getenv("NEO4J_PASSWORD") or config.NEO4J_PASSWORD
 
         self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
 
@@ -312,56 +313,4 @@ class Neo4jLegalRetriever:
         return []
 
 
-def main():
-    print("="*60)
-    print("🔍 NEO4J + QDRANT HYBRID LEGAL RETRIEVER TEST")
-    print("="*60)
 
-    embedding_path = "./data/models/vietnamese_embedding"
-    if not os.path.exists(embedding_path):
-        embedding_path = None
-        print("⚠️ Embedding model not found, using keyword search")
-
-    try:
-        retriever = Neo4jLegalRetriever(
-            embedding_model_path=embedding_path
-        )
-    except Exception as e:
-        print(f"❌ Failed to initialize retriever: {e}")
-        return
-
-    test_queries = [
-        "Điều kiện bảo hộ quyền tác giả",
-        "Xử phạt vi phạm hành chính về sở hữu trí tuệ",
-        "Đăng ký nhãn hiệu như thế nào",
-    ]
-
-    for query in test_queries:
-        print(f"\n{'─'*40}")
-        print(f"🔎 Query: {query}")
-        print(f"{'─'*40}")
-
-        results = retriever.search(
-            query=query,
-            query_date="2024-01-01",
-            doc_types=["Luật", "Nghị định"],
-            top_k=3,
-            expand_context=True,
-        )
-
-        for i, r in enumerate(results, 1):
-            print(f"\n📄 Result {i} (score: {r.score:.4f})")
-            print(f"   Document: {r.doc_name}")
-            print(f"   Điều: {r.dieu} - {r.dieu_title}")
-            print(f"   Content: {r.content[:200]}...")
-            if r.context_before:
-                print(f"   [Has context before]")
-            if r.context_after:
-                print(f"   [Has context after]")
-
-    retriever.close()
-    print("\n✅ Test complete!")
-
-
-if __name__ == "__main__":
-    main()

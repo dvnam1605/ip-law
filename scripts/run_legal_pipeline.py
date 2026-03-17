@@ -85,7 +85,7 @@ def run_chunking():
 # ═══════════════════════════════════════════════════════
 def run_ingest():
     """Ingest chunks into Neo4j (no embeddings — those are in Qdrant)."""
-    from backend.utils.neo4j_ingest import (
+    from backend.tooling.neo4j_ingest import (
         Neo4jClient, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_AVAILABLE,
         setup_schema, load_chunks, ingest_documents, ingest_chunks,
         create_next_relationships, get_stats,

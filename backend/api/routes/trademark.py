@@ -1,87 +1,50 @@
 """Trademark search and analysis endpoints."""
-from datetime import datetime
+import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from backend.db.schemas import (
-    TrademarkSearchRequest, TrademarkResult, TrademarkSearchResponse,
+    TrademarkSearchRequest, TrademarkSearchResponse,
     TrademarkAnalyzeRequest,
 )
 from backend.api.deps import load_history
-from backend.core.trademark_pipeline import get_trademark_pipeline
+from backend.services.common import SSE_GENERIC_ERROR, ServiceTimeoutError
+from backend.services.trademark import get_trademark_service
 
 router = APIRouter(prefix="/api/trademark", tags=["Trademark"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/search", response_model=TrademarkSearchResponse)
 async def trademark_search(request: TrademarkSearchRequest):
-    start_time = datetime.now()
     try:
-        pipeline = get_trademark_pipeline()
-        matches = await pipeline.search_async(
-            brand_name=request.brand_name,
-            nice_classes=request.nice_classes,
-            limit=request.limit,
-        )
-        processing_time = (datetime.now() - start_time).total_seconds() * 1000
-
-        results = [
-            TrademarkResult(
-                brand_name=m.brand_name,
-                owner_name=m.owner_name,
-                owner_country=m.owner_country,
-                registration_number=m.registration_number,
-                nice_classes=m.nice_classes,
-                ipr_type=m.ipr_type,
-                country_of_filing=m.country_of_filing,
-                status=m.status,
-                status_date=m.status_date,
-                similarity_score=m.similarity_score,
-                match_type=m.match_type,
-                st13=m.st13,
-                application_number=m.application_number,
-                registration_date=m.registration_date,
-                application_date=m.application_date,
-                expiry_date=m.expiry_date,
-                feature=m.feature,
-                ip_office=m.ip_office,
-            )
-            for m in matches
-        ]
-
-        return TrademarkSearchResponse(
-            success=True,
-            query=request.brand_name,
-            results=results,
-            total_found=len(results),
-            processing_time_ms=round(processing_time, 2),
+        service = get_trademark_service()
+        return await service.search(request)
+    except ServiceTimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail={"error": "Trademark search timed out"},
         )
     except Exception as e:
-        processing_time = (datetime.now() - start_time).total_seconds() * 1000
+        logger.exception("/api/trademark/search failed: %s", e)
         raise HTTPException(
             status_code=500,
-            detail={"error": str(e), "processing_time_ms": round(processing_time, 2)}
+            detail={"error": "Trademark search failed"}
         )
 
 
 @router.post("/analyze/stream")
 async def trademark_analyze_stream(request: TrademarkAnalyzeRequest):
     history = await load_history(request.session_id)
+    service = get_trademark_service()
 
     async def generate():
         try:
-            pipeline = get_trademark_pipeline()
-            yield f"data: __ROUTE__trademark__\n\n"
-            async for chunk in pipeline.analyze_stream(
-                query=request.query,
-                nice_classes=request.nice_classes,
-                history=history,
-            ):
-                escaped = chunk.replace('\\', '\\\\').replace('\n', '\\n')
-                yield f"data: {escaped}\n\n"
-            yield "data: [DONE]\n\n"
+            async for payload in service.stream_analysis(request, history):
+                yield payload
         except Exception as e:
-            yield f"data: [ERROR]{str(e)}\n\n"
+            logger.exception("/api/trademark/analyze/stream failed: %s", e)
+            yield SSE_GENERIC_ERROR
 
     return StreamingResponse(
         generate(),

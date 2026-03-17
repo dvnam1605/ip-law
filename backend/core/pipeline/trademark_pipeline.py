@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from pathlib import Path
 from dotenv import load_dotenv
+from backend.core.config import config
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
@@ -15,15 +16,15 @@ load_dotenv(PROJECT_ROOT / ".env")
 from google import genai
 from google.genai import types
 
-from backend.core.rag_pipeline import format_history
+from backend.core.pipeline.rag_pipeline import format_history
 
 from sqlalchemy import text, select, func, or_, case, literal
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from backend.db.database import DATABASE_URL
 from backend.db.models import Trademark, NiceClass
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or config.GEMINI_API_KEY
+GEMINI_MODEL = os.getenv("GEMINI_MODEL") or config.GEMINI_MODEL
 
 
 @dataclass

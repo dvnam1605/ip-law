@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 from dataclasses import dataclass
 from pathlib import Path
 from dotenv import load_dotenv
+from backend.core.config import config
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
@@ -10,13 +11,13 @@ load_dotenv(PROJECT_ROOT / ".env")
 from google import genai
 from google.genai import types
 
-from backend.utils.verdict_neo4j_retriever import Neo4jVerdictRetriever, RetrievedVerdictChunk
-from backend.core.rag_pipeline import format_history
+from backend.runtime.retrievers.verdict_retriever import Neo4jVerdictRetriever, RetrievedVerdictChunk
+from backend.core.pipeline.rag_pipeline import format_history
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or config.GEMINI_API_KEY
+GEMINI_MODEL = os.getenv("GEMINI_MODEL") or config.GEMINI_MODEL
 EMBEDDING_MODEL_PATH = str(PROJECT_ROOT / "data" / "models" / "vietnamese_embedding")
-TOP_K = int(os.getenv("TOP_K_VERDICT", "8"))
+TOP_K = int(os.getenv("TOP_K_VERDICT") or config.TOP_K_VERDICT)
 
 NO_RESULT_MSG = (
     "Xin lỗi, tôi không tìm thấy bản án nào liên quan đến tình huống "

@@ -2,12 +2,13 @@ import json
 import os
 import hashlib
 from typing import List, Dict
+from backend.core.config import config
 
 from neo4j import GraphDatabase
 
-NEO4J_URI = os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "dvnam1605")
+NEO4J_URI = os.getenv("NEO4J_URI") or config.NEO4J_URI
+NEO4J_USER = os.getenv("NEO4J_USER") or config.NEO4J_USER
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD") or config.NEO4J_PASSWORD
 
 CHUNKS_JSON = "/home/namdv/shtt/chunking/verdict_chunks.json"
 EMBEDDINGS_JSON = "/home/namdv/shtt/chunking/verdict_chunks_with_embeddings.json"

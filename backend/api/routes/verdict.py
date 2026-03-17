@@ -1,52 +1,35 @@
 """Verdict (Bản án) query endpoints."""
-from datetime import datetime
+import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from backend.api.schemas import (
-    VerdictQueryRequest, VerdictQueryResponse, VerdictSourceInfo,
+    VerdictQueryRequest, VerdictQueryResponse,
 )
 from backend.api.deps import load_history
-from backend.core.verdict_rag_pipeline import get_verdict_pipeline
+from backend.services.common import SSE_GENERIC_ERROR, ServiceTimeoutError
+from backend.services.verdict import get_verdict_service
 
 router = APIRouter(prefix="/api/verdict", tags=["Verdict"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/query", response_model=VerdictQueryResponse)
 async def query_verdict(request: VerdictQueryRequest):
-    start_time = datetime.now()
-
     try:
-        pipeline = get_verdict_pipeline()
-
-        result = pipeline.query(
-            query=request.query,
-            top_k=request.top_k,
-            ip_types=request.ip_types,
-            trial_level=request.trial_level
+        service = get_verdict_service()
+        return await service.run_query(request)
+    except ServiceTimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail={"error": "Verdict query timed out"},
         )
-
-        processing_time = (datetime.now() - start_time).total_seconds() * 1000
-        sources = [VerdictSourceInfo(**s) for s in result.sources]
-
-        return VerdictQueryResponse(
-            success=True,
-            query=result.query,
-            answer=result.answer,
-            sources=sources,
-            retrieved_chunks=result.retrieved_chunks,
-            processing_time_ms=round(processing_time, 2)
-        )
-
     except Exception as e:
-        processing_time = (datetime.now() - start_time).total_seconds() * 1000
+        logger.exception("/api/verdict/query failed: %s", e)
         raise HTTPException(
             status_code=500,
-            detail={
-                "error": str(e),
-                "processing_time_ms": round(processing_time, 2)
-            }
+            detail={"error": "Verdict query failed"}
         )
 
 
@@ -62,25 +45,16 @@ async def query_verdict_get(
 @router.post("/query/stream")
 async def query_verdict_stream(request: VerdictQueryRequest):
     history = await load_history(request.session_id)
+    service = get_verdict_service()
 
     async def generate():
         try:
-            pipeline = get_verdict_pipeline()
-
-            async for chunk in pipeline.query_stream(
-                query=request.query,
-                top_k=request.top_k,
-                ip_types=request.ip_types,
-                trial_level=request.trial_level,
-                history=history,
-            ):
-                escaped = chunk.replace('\\', '\\\\').replace('\n', '\\n')
-                yield f"data: {escaped}\n\n"
-
-            yield "data: [DONE]\n\n"
+            async for payload in service.stream_query(request, history):
+                yield payload
 
         except Exception as e:
-            yield f"data: [ERROR]{str(e)}\n\n"
+            logger.exception("/api/verdict/query/stream failed: %s", e)
+            yield SSE_GENERIC_ERROR
 
     return StreamingResponse(
         generate(),

@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import hashlib
 from datetime import datetime
+from backend.core.config import config
 
 try:
     from neo4j import GraphDatabase
@@ -14,9 +15,9 @@ except ImportError:
     print("⚠️ neo4j package not installed. Run: pip install neo4j")
 
 
-NEO4J_URI = os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "dvnam1605")
+NEO4J_URI = os.getenv("NEO4J_URI") or config.NEO4J_URI
+NEO4J_USER = os.getenv("NEO4J_USER") or config.NEO4J_USER
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD") or config.NEO4J_PASSWORD
 
 CHUNKS_JSON = "./chunks_output_v2.json"
 EMBEDDINGS_JSON = "./chunks_output_v2_with_embeddings.json"
@@ -281,78 +282,7 @@ def ingest_embeddings(client: Neo4jClient, embeddings_file: str, batch_size: int
     return
 
 
-def print_query_examples():
-    print("\n" + "="*60)
-    print("📖 EXAMPLE CYPHER QUERIES FOR LEGAL RAG")
-    print("="*60)
-    
-    examples = [
-        {
-            "name": "1. Filter active documents by effective date",
-            "query": """
-MATCH (c:Chunk)-[:PART_OF]->(d:Document)
-WHERE d.status = 'active' 
-  AND d.effective_date <= date('2024-01-01')
-  AND (d.expiry_date IS NULL OR d.expiry_date > date('2024-01-01'))
-RETURN c.chunk_id, c.content, d.doc_name
-LIMIT 10
-"""
-        },
-        {
-            "name": "2. Vector search with pre-filtering (requires embeddings)",
-            "query": """
-// First filter by legal validity
-MATCH (c:Chunk)-[:PART_OF]->(d:Document)
-WHERE d.status = 'active' AND d.doc_type = 'Luật'
-WITH c, d
 
-// Then do vector search (example with placeholder)
-// CALL db.index.vector.queryNodes('chunk_embedding_index', 10, $query_embedding)
-// YIELD node, score
-RETURN c.chunk_id, c.dieu, c.content, d.doc_name
-LIMIT 10
-"""
-        },
-        {
-            "name": "3. Get chunk with context (NEXT neighbors)",
-            "query": """
-MATCH (c:Chunk {dieu: 'Điều 4'})-[:PART_OF]->(d:Document {doc_type: 'Luật'})
-OPTIONAL MATCH (prev)-[:NEXT]->(c)
-OPTIONAL MATCH (c)-[:NEXT]->(next)
-RETURN 
-    prev.content AS previous_chunk,
-    c.content AS current_chunk,
-    next.content AS next_chunk,
-    d.doc_name AS document
-"""
-        },
-        {
-            "name": "4. Find all Điều in a Chương",
-            "query": """
-MATCH (c:Chunk)-[:PART_OF]->(d:Document)
-WHERE c.chuong = 'Chương I' AND d.doc_number = '50/2005/QH11'
-RETURN DISTINCT c.dieu, c.dieu_title
-ORDER BY c.chunk_index
-"""
-        },
-        {
-            "name": "5. Search chunks by keyword with document filtering",
-            "query": """
-MATCH (c:Chunk)-[:PART_OF]->(d:Document)
-WHERE c.content CONTAINS 'quyền sở hữu trí tuệ'
-  AND d.status = 'active'
-  AND d.doc_type IN ['Luật', 'Nghị định']
-RETURN c.dieu, c.content, d.doc_name, d.effective_date
-LIMIT 20
-"""
-        }
-    ]
-    
-    for ex in examples:
-        print(f"\n{'─'*40}")
-        print(f"📌 {ex['name']}")
-        print(f"{'─'*40}")
-        print(ex['query'])
 
 
 def get_stats(client: Neo4jClient):
@@ -421,8 +351,7 @@ def main():
         # Show stats
         get_stats(client)
         
-        # Print query examples
-        print_query_examples()
+
         
         print("\n" + "="*60)
         print("✅ INGEST COMPLETE!")

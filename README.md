@@ -8,16 +8,23 @@ Hệ thống RAG (Retrieval-Augmented Generation) cho tư vấn pháp luật và
 shtt/
 ├── backend/
 │   ├── api/                    # FastAPI application
-│   │   └── main.py             # API endpoints
-│   ├── core/                   # Core business logic (RAG pipelines, Routers)
-│   ├── utils/                  # Utilities
-│   │   ├── qdrant_retriever.py # Shared Qdrant vector search
-│   │   ├── neo4j_retriever.py  # Pháp luật: Neo4j context + metadata
-│   │   └── verdict_neo4j_retriever.py # Bản án: Neo4j context + metadata
+│   │   └── app.py              # API entrypoint & routes registration
+│   ├── core/
+│   │   ├── pipeline/           # RAG pipelines
+│   │   │   ├── rag_pipeline.py
+│   │   │   ├── verdict_rag_pipeline.py
+│   │   │   └── trademark_pipeline.py
+│   │   ├── smart_router.py     # Router legal/verdict/trademark/combined
+│   │   ├── config.py           # Centralized settings
+│   │   └── security.py         # JWT + password utilities
+│   ├── runtime/
+│   │   └── retrievers/         # Runtime retrievers (Neo4j + Qdrant hybrid)
+│   ├── tooling/                # Offline ingestion/crawler scripts as importable modules
 │   ├── chunking/               # Document processing & Upload
 │   │   ├── legal_chunker.py    # Chunking & Embedding pháp luật
 │   │   ├── verdict_chunker.py  # Chunking & Embedding bản án
 │   │   └── verdict_extractors.py # Trích xuất metadata bản án
+│   ├── services/               # Service layer used by API routes
 ├── frontend/                   # React + Vite Chat App UI
 ├── data/
 │   ├── models/                 # Vietnamese embedding model
@@ -27,7 +34,7 @@ shtt/
 │   └── run_verdict_pipeline.py # Chạy pipeline bản án
 ├── docker-compose.yml          # Neo4j, Qdrant, PostgreSQL
 ├── requirements.txt            # Python dependencies cho Backend
-├── package.json                # Node dependencies cho Frontend
+├── frontend/package.json       # Node dependencies cho Frontend
 └── .env                        # Environment variables
 ```
 

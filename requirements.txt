@@ -12,6 +12,7 @@ neo4j
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 pydantic>=2.0.0
+pydantic-settings>=2.0.0
 
 # Database & Auth
 sqlalchemy[asyncio]>=2.0.0

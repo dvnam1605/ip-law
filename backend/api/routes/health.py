@@ -2,6 +2,7 @@
 from datetime import datetime
 from fastapi import APIRouter
 
+from backend.core.config import config
 from backend.api.schemas import HealthResponse
 
 router = APIRouter()
@@ -12,7 +13,7 @@ async def root():
     return HealthResponse(
         status="ok",
         timestamp=datetime.now().isoformat(),
-        version="2.0.0"
+        version=config.API_VERSION,
     )
 
 
@@ -21,5 +22,5 @@ async def health_check():
     return HealthResponse(
         status="ok",
         timestamp=datetime.now().isoformat(),
-        version="2.0.0"
+        version=config.API_VERSION,
     )

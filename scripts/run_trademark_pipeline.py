@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Trademark Pipeline — Crawl WIPO + Ingest to Neo4j in one run.
+Trademark Pipeline — Crawl WIPO + Ingest to PostgreSQL in one run.
 
 Combines:
-  1. utils/trademark_crawler.py        (WIPO → JSON)
-  2. utils/trademark_neo4j_ingest.py   (JSON → Neo4j)
+    1. backend.tooling.trademark_crawler     (WIPO -> JSON)
+    2. backend.tooling.trademark_pg_ingest    (JSON -> PostgreSQL)
 
 Usage:
   python scripts/run_trademark_pipeline.py "Samsung" "Apple"
@@ -35,7 +35,7 @@ CRAWL_OUTPUT_DIR = PROJECT_ROOT / "data" / "trademarks"
 # ═══════════════════════════════════════════════════════
 async def run_crawl(keywords: list, country: str, pages: int, output_file: str) -> str:
     """Crawl trademarks from WIPO Brand DB."""
-    from backend.utils.trademark_crawler import WIPOBrandDBCrawler
+    from backend.tooling.trademark_crawler import WIPOBrandDBCrawler
 
     print("=" * 60)
     print("🌐 STEP 1: CRAWL WIPO BRAND DB")
@@ -57,14 +57,14 @@ async def run_crawl(keywords: list, country: str, pages: int, output_file: str) 
 
 
 # ═══════════════════════════════════════════════════════
-#  STEP 2: Neo4j Ingest
+#  STEP 2: PostgreSQL Ingest
 # ═══════════════════════════════════════════════════════
-def run_ingest(input_file: str, batch_size: int = 50):
-    """Ingest crawled trademarks into Neo4j."""
-    from backend.utils.trademark_neo4j_ingest import TrademarkNeo4jIngestor
+async def run_ingest(input_file: str, batch_size: int = 50):
+    """Ingest crawled trademarks into PostgreSQL."""
+    from backend.tooling.trademark_pg_ingest import TrademarkPGIngestor
 
     print("\n" + "=" * 60)
-    print("🗄️  STEP 2: NEO4J TRADEMARK INGEST")
+    print("🗄️  STEP 2: POSTGRESQL TRADEMARK INGEST")
     print("=" * 60)
 
     if not Path(input_file).exists():
@@ -72,20 +72,21 @@ def run_ingest(input_file: str, batch_size: int = 50):
         return False
 
     try:
-        ingestor = TrademarkNeo4jIngestor()
+        ingestor = TrademarkPGIngestor()
     except Exception as e:
         print(f"❌ Failed to initialize ingestor: {e}")
         return False
 
     try:
-        ingestor.ingest_from_file(input_file, batch_size)
-        print("\n✅ TRADEMARK INGEST COMPLETE!")
+        await ingestor.ingest_from_file(input_file, batch_size)
+        count = await ingestor.get_count()
+        print(f"\n✅ TRADEMARK INGEST COMPLETE! Total: {count} trademarks")
         return True
     except Exception as e:
         print(f"❌ Ingest error: {e}")
         return False
     finally:
-        ingestor.close()
+        await ingestor.close()
 
 
 # ═══════════════════════════════════════════════════════
@@ -93,14 +94,14 @@ def run_ingest(input_file: str, batch_size: int = 50):
 # ═══════════════════════════════════════════════════════
 def main():
     parser = argparse.ArgumentParser(
-        description="Trademark Pipeline: Crawl WIPO → Ingest Neo4j"
+        description="Trademark Pipeline: Crawl WIPO -> Ingest PostgreSQL"
     )
     parser.add_argument("keywords", nargs="*", help="Brand names to search on WIPO")
     parser.add_argument("--country", default="VN", help="Country code (default: VN)")
     parser.add_argument("--pages", type=int, default=3, help="Max pages per keyword (default: 3)")
     parser.add_argument("--input", "-i", default=None, help="Input JSON file (for --skip-crawl)")
     parser.add_argument("--output", "-o", default=None, help="Output JSON file for crawl results")
-    parser.add_argument("--batch-size", type=int, default=50, help="Neo4j ingest batch size")
+    parser.add_argument("--batch-size", type=int, default=50, help="PostgreSQL ingest batch size")
     parser.add_argument("--skip-crawl", action="store_true", help="Bỏ qua crawl (dùng --input)")
     parser.add_argument("--skip-ingest", action="store_true", help="Bỏ qua ingest Neo4j")
     args = parser.parse_args()
@@ -130,7 +131,7 @@ def main():
 
     # Step 2: Ingest
     if not args.skip_ingest:
-        if not run_ingest(input_file, args.batch_size):
+        if not asyncio.run(run_ingest(input_file, args.batch_size)):
             sys.exit(1)
     else:
         print("⏭️  Skipping ingest (--skip-ingest)")

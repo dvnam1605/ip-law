@@ -69,7 +69,7 @@ def run_chunking():
 # ═══════════════════════════════════════════════════════
 def run_ingest():
     """Ingest verdict chunks into Neo4j (no embeddings)."""
-    from backend.utils.verdict_neo4j_ingest import (
+    from backend.tooling.verdict_neo4j_ingest import (
         Neo4jClient, NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
         setup_schema, load_chunks, ingest_verdicts, ingest_verdict_chunks,
         create_next_relationships, create_semantic_relationships,

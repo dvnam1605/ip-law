@@ -403,7 +403,6 @@ class WIPOBrandDBCrawler:
         return unique_records
 
 
-# ── CLI Entry Point ──────────────────────────────────
 
 async def main():
     import argparse

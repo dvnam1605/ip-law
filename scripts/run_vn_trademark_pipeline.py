@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 #  STEP 1: Crawl all VN trademarks (adaptive Excel download)
 # ═══════════════════════════════════════════════════════
 async def run_crawl(fresh: bool, max_depth: int, headless: bool):
-    from backend.utils.trademark_crawler_v2 import WIPOAllVNCrawler
+    from backend.tooling.trademark_crawler_v2 import WIPOAllVNCrawler
 
     print("=" * 60)
     print("🌐 STEP 1: CRAWL ALL VN TRADEMARKS FROM WIPO")
@@ -58,7 +58,7 @@ async def run_crawl(fresh: bool, max_depth: int, headless: bool):
 #  STEP 1b: Count only (no download)
 # ═══════════════════════════════════════════════════════
 async def run_count_only(headless: bool):
-    from backend.utils.trademark_crawler_v2 import WIPOAllVNCrawler
+    from backend.tooling.trademark_crawler_v2 import WIPOAllVNCrawler
 
     print("=" * 60)
     print("📊 COUNT ONLY: ước lượng tổng nhãn hiệu VN")
@@ -72,7 +72,7 @@ async def run_count_only(headless: bool):
 #  STEP 2: Merge Excel files → JSON
 # ═══════════════════════════════════════════════════════
 def run_merge(input_dir: Path, output_path: Path) -> str:
-    from backend.utils.xlsx_merger import merge_all
+    from backend.tooling.xlsx_merger import merge_all
 
     print("\n" + "=" * 60)
     print("📑 STEP 2: MERGE EXCEL FILES → JSON")
@@ -89,7 +89,7 @@ def run_merge(input_dir: Path, output_path: Path) -> str:
 #  STEP 3: PostgreSQL Ingest
 # ═══════════════════════════════════════════════════════
 async def run_ingest(input_file: str, batch_size: int):
-    from backend.utils.trademark_pg_ingest import TrademarkPGIngestor
+    from backend.tooling.trademark_pg_ingest import TrademarkPGIngestor
 
     print("\n" + "=" * 60)
     print("🗄️  STEP 3: POSTGRESQL TRADEMARK INGEST")

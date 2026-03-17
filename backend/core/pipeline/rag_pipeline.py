@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
+from backend.core.config import config
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
@@ -11,13 +12,13 @@ load_dotenv(PROJECT_ROOT / ".env")
 from google import genai
 from google.genai import types
 
-from backend.utils.neo4j_retriever import Neo4jLegalRetriever, RetrievedChunk
+from backend.runtime.retrievers.legal_retriever import Neo4jLegalRetriever, RetrievedChunk
 
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or config.GEMINI_API_KEY
+GEMINI_MODEL = os.getenv("GEMINI_MODEL") or config.GEMINI_MODEL
 EMBEDDING_MODEL_PATH = str(PROJECT_ROOT / "data" / "models" / "vietnamese_embedding")
-TOP_K_RETRIEVAL = int(os.getenv("TOP_K_RETRIEVAL", "5"))
+TOP_K_RETRIEVAL = int(os.getenv("TOP_K_RETRIEVAL") or config.TOP_K_RETRIEVAL)
 
 
 @dataclass

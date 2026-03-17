@@ -1,6 +1,7 @@
 """
 Shared dependencies and helpers for API routes.
 """
+import logging
 from typing import Optional
 
 from sqlalchemy import select
@@ -8,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db.database import async_session_factory
 from backend.db.models import Message
+
+logger = logging.getLogger(__name__)
 
 
 async def load_history(session_id: Optional[str], limit: int = 5) -> list:
@@ -28,5 +31,5 @@ async def load_history(session_id: Optional[str], limit: int = 5) -> list:
                 for m in reversed(messages)
             ]
     except Exception as e:
-        print(f"⚠️ Failed to load history: {e}")
+        logger.warning("Failed to load history for session %s: %s", session_id, e)
         return []

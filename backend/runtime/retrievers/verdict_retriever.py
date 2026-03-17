@@ -1,10 +1,11 @@
 import os
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+from backend.core.config import config
 
 from neo4j import GraphDatabase
 
-from backend.utils.qdrant_retriever import QdrantSearchClient, VERDICT_COLLECTION
+from backend.runtime.retrievers.qdrant import QdrantSearchClient, VERDICT_COLLECTION
 
 SECTION_BOOSTS = {
     'reasoning': 1.3,
@@ -72,9 +73,9 @@ class Neo4jVerdictRetriever:
 
     def __init__(self, uri=None, user=None, password=None,
                  embedding_model_path=None, qdrant_url=None):
-        self.uri = uri or os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
-        self.user = user or os.getenv("NEO4J_USER", "neo4j")
-        self.password = password or os.getenv("NEO4J_PASSWORD", "dvnam1605")
+        self.uri = uri or os.getenv("NEO4J_URI") or config.NEO4J_URI
+        self.user = user or os.getenv("NEO4J_USER") or config.NEO4J_USER
+        self.password = password or os.getenv("NEO4J_PASSWORD") or config.NEO4J_PASSWORD
         self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
 
         # Qdrant client for vector search

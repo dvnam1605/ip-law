@@ -7,7 +7,7 @@ from typing import List, Optional
 
 
 class SmartQueryRequest(BaseModel):
-    query: str = Field(..., description="Câu hỏi pháp luật hoặc tình huống", min_length=5, max_length=5000)
+    query: str = Field(..., description="Câu hỏi pháp luật hoặc tình huống", min_length=1, max_length=5000)
     session_id: Optional[str] = Field(None, description="Session ID để load lịch sử hội thoại")
 
 
