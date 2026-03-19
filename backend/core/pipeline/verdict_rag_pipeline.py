@@ -5,7 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from backend.core.config import config
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(PROJECT_ROOT / ".env")
 
 from google import genai

@@ -1,8 +1,7 @@
 import os
-from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime, date
+from typing import List, Dict, Optional, Tuple
+from datetime import datetime
 from dataclasses import dataclass
-import numpy as np
 from backend.core.config import config
 
 try:
@@ -32,7 +31,7 @@ class RetrievedChunk:
 
 class Neo4jLegalRetriever:
     """
-    Hybrid Retrieval Flow:
+    Dense Retrieval Flow:
     1. Neo4j Cypher filter: văn bản đang có hiệu lực
     2. Qdrant vector search trên tập đã lọc
     3. Neo4j NEXT để lấy đủ context
@@ -62,6 +61,10 @@ class Neo4jLegalRetriever:
         )
         # For backward compat check in search()
         self.embedding_model = self.qdrant.embedding_model
+        self.collection_name = os.getenv("QDRANT_LEGAL_COLLECTION", LEGAL_COLLECTION)
+
+        # Project-wide setting: dense-only retrieval.
+        self.use_neo4j_prefilter = (os.getenv("LEGAL_PREFILTER_NEO4J", "0").strip().lower() in {"1", "true", "yes", "on"})
 
     def close(self):
         self.driver.close()
@@ -85,26 +88,50 @@ class Neo4jLegalRetriever:
         expand_context: bool = True,
         context_window: int = 1,
     ) -> List[RetrievedChunk]:
-        if query_date is None:
-            query_date = datetime.now().strftime("%Y-%m-%d")
+        candidates = None
+        if self.use_neo4j_prefilter:
+            if query_date is None:
+                query_date = datetime.now().strftime("%Y-%m-%d")
+            candidates = self._filter_by_validity(query_date, doc_types, status)
+            if not candidates:
+                print("⚠️ No valid documents found for the given criteria")
+                return []
+            print(f"📋 Found {len(candidates)} candidate chunks after filtering")
 
-        candidates = self._filter_by_validity(query_date, doc_types, status)
+        ranked = self._vector_search_ranked(query, candidates, top_k=top_k)
 
-        if not candidates:
-            print("⚠️ No valid documents found for the given criteria")
-            return []
-
-        print(f"📋 Found {len(candidates)} candidate chunks after filtering")
-
-        if self.embedding_model:
-            results = self._vector_search(query, candidates, top_k)
-        else:
-            results = self._keyword_search(query, candidates, top_k)
+        results = self._hydrate_chunks(ranked, top_k=top_k)
 
         if expand_context and results:
             results = self._expand_context(results, context_window)
 
         return results
+
+    def search_ids(
+        self,
+        query: str,
+        query_date: str = None,
+        doc_types: List[str] = None,
+        status: str = "active",
+        top_k: int = 10,
+    ) -> List[str]:
+        """Benchmark-friendly retrieval: return ranked IDs directly from retrieval stage.
+
+        This intentionally skips Neo4j hydration/context expansion so benchmark metrics
+        evaluate pure retrieval quality.
+        """
+        candidates = None
+        print(self.use_neo4j_prefilter)
+        if self.use_neo4j_prefilter:
+            if query_date is None:
+                query_date = datetime.now().strftime("%Y-%m-%d")
+            candidates = self._filter_by_validity(query_date, doc_types, status)
+            if not candidates:
+                return []
+
+        ranked = self._vector_search_ranked(query, candidates, top_k=top_k)
+
+        return [cid for cid, _ in ranked[:top_k]]
 
     def _filter_by_validity(
         self,
@@ -133,19 +160,21 @@ class Neo4jLegalRetriever:
         results = self._run_query(query, params)
         return [r["chunk_id"] for r in results]
 
-    def _vector_search(
+    def _vector_search_ranked(
         self,
         query: str,
         candidate_ids: List[str],
         top_k: int,
-    ) -> List[RetrievedChunk]:
-        """Vector search via Qdrant, then fetch metadata from Neo4j."""
+    ) -> List[Tuple[str, float]]:
+        """Dense vector search via Qdrant."""
+        if not self.embedding_model:
+            return []
+
         query_embedding = self.qdrant.encode(query)
 
-        # Search Qdrant with candidate filter from Neo4j
         try:
-            qdrant_results = self.qdrant.search(
-                collection=LEGAL_COLLECTION,
+            return self.qdrant.search(
+                collection=self.collection_name,
                 query_embedding=query_embedding,
                 id_field="chunk_id",
                 candidate_ids=candidate_ids,
@@ -153,15 +182,19 @@ class Neo4jLegalRetriever:
             )
         except Exception as e:
             print(f"⚠️ Qdrant search failed: {e}")
-            print("   Falling back to keyword search")
-            return self._keyword_search(query, candidate_ids, top_k)
+            return []
 
-        if not qdrant_results:
-            return self._keyword_search(query, candidate_ids, top_k)
+    def _hydrate_chunks(
+        self,
+        ranked_chunk_ids: List[Tuple[str, float]],
+        top_k: int,
+    ) -> List[RetrievedChunk]:
+        """Fetch full chunk/document metadata from Neo4j preserving ranked order."""
+        if not ranked_chunk_ids:
+            return []
 
-        # Map chunk_ids back to Neo4j for full metadata
-        chunk_ids = [cid for cid, _ in qdrant_results]
-        score_map = {cid: score for cid, score in qdrant_results}
+        chunk_ids = [cid for cid, _ in ranked_chunk_ids[:top_k]]
+        score_map = {cid: score for cid, score in ranked_chunk_ids}
 
         cypher = """
         UNWIND $chunk_ids AS cid
@@ -177,82 +210,40 @@ class Neo4jLegalRetriever:
             d.doc_type AS doc_type,
             d.effective_date AS effective_date
         """
+        rows = self._run_query(cypher, {"chunk_ids": chunk_ids})
+        row_map = {r["chunk_id"]: r for r in rows if r.get("chunk_id")}
 
-        results = self._run_query(cypher, {"chunk_ids": chunk_ids})
-
-        return [
-            RetrievedChunk(
-                chunk_id=r["chunk_id"],
-                content=r["content"],
-                score=score_map.get(r["chunk_id"], 0),
-                dieu=r["dieu"],
-                dieu_title=r["dieu_title"],
-                chuong=r["chuong"],
-                doc_name=r["doc_name"],
-                doc_number=r["doc_number"],
-                doc_type=r["doc_type"],
-                effective_date=str(r["effective_date"]) if r["effective_date"] else None,
+        hydrated: List[RetrievedChunk] = []
+        for cid in chunk_ids:
+            r = row_map.get(cid)
+            if not r:
+                continue
+            hydrated.append(
+                RetrievedChunk(
+                    chunk_id=r["chunk_id"],
+                    content=r["content"],
+                    score=score_map.get(r["chunk_id"], 0),
+                    dieu=r["dieu"],
+                    dieu_title=r["dieu_title"],
+                    chuong=r["chuong"],
+                    doc_name=r["doc_name"],
+                    doc_number=r["doc_number"],
+                    doc_type=r["doc_type"],
+                    effective_date=str(r["effective_date"]) if r["effective_date"] else None,
+                )
             )
-            for r in results
-        ]
 
-    def _keyword_search(
+        return hydrated
+
+    def _vector_search(
         self,
         query: str,
         candidate_ids: List[str],
         top_k: int,
     ) -> List[RetrievedChunk]:
-        keywords = [w.lower() for w in query.split() if len(w) > 2]
-
-        if not keywords:
-            return []
-
-        contains_conditions = " OR ".join([f"toLower(c.content) CONTAINS '{kw}'" for kw in keywords[:5]])
-
-        cypher_query = f"""
-        UNWIND $candidate_ids AS cid
-        MATCH (c:Chunk {{chunk_id: cid}})-[:PART_OF]->(d:Document)
-        WHERE {contains_conditions}
-
-        WITH c, d,
-             size([kw IN $keywords WHERE toLower(c.content) CONTAINS kw]) AS match_count
-        ORDER BY match_count DESC
-        LIMIT $top_k
-
-        RETURN
-            c.chunk_id AS chunk_id,
-            c.content AS content,
-            toFloat(match_count) / size($keywords) AS score,
-            c.dieu AS dieu,
-            c.dieu_title AS dieu_title,
-            c.chuong AS chuong,
-            d.doc_name AS doc_name,
-            d.doc_number AS doc_number,
-            d.doc_type AS doc_type,
-            d.effective_date AS effective_date
-        """
-
-        results = self._run_query(cypher_query, {
-            "candidate_ids": candidate_ids,
-            "keywords": keywords,
-            "top_k": top_k
-        })
-
-        return [
-            RetrievedChunk(
-                chunk_id=r["chunk_id"],
-                content=r["content"],
-                score=r["score"],
-                dieu=r["dieu"],
-                dieu_title=r["dieu_title"],
-                chuong=r["chuong"],
-                doc_name=r["doc_name"],
-                doc_number=r["doc_number"],
-                doc_type=r["doc_type"],
-                effective_date=str(r["effective_date"]) if r["effective_date"] else None,
-            )
-            for r in results
-        ]
+        """Backward-compatible wrapper for callers expecting hydrated chunks."""
+        ranked = self._vector_search_ranked(query, candidate_ids, top_k)
+        return self._hydrate_chunks(ranked, top_k)
 
     def _expand_context(
         self,

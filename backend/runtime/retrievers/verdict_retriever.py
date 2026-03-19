@@ -1,5 +1,5 @@
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from backend.core.config import config
 
@@ -69,7 +69,7 @@ class RetrievedVerdictChunk:
 
 
 class Neo4jVerdictRetriever:
-    """Hybrid retriever: Qdrant vector search + Neo4j context expansion."""
+    """Dense retriever: Qdrant vector search + Neo4j context expansion."""
 
     def __init__(self, uri=None, user=None, password=None,
                  embedding_model_path=None, qdrant_url=None):
@@ -84,6 +84,10 @@ class Neo4jVerdictRetriever:
             embedding_model_path=embedding_model_path
         )
         self.embedding_model = self.qdrant.embedding_model
+        self.collection_name = os.getenv("QDRANT_VERDICT_COLLECTION", VERDICT_COLLECTION)
+
+        # Project-wide setting: dense-only retrieval.
+        self.use_neo4j_prefilter = (os.getenv("VERDICT_PREFILTER_NEO4J", "0").strip().lower() in {"1", "true", "yes", "on"})
 
     def close(self):
         self.driver.close()
@@ -103,15 +107,17 @@ class Neo4jVerdictRetriever:
         context_window: int = 1,
         boost_reasoning: bool = True,
     ) -> List[RetrievedVerdictChunk]:
-        candidates = self._filter_candidates(ip_types, trial_level)
-        if not candidates:
-            return []
+        candidates = None
+        if self.use_neo4j_prefilter:
+            candidates = self._filter_candidates(ip_types, trial_level)
+            if not candidates:
+                return []
 
         fetch_k = top_k * 2 if boost_reasoning else top_k
-        if self.embedding_model:
-            results = self._vector_search(query, candidates, fetch_k)
-        else:
-            results = self._keyword_search(query, candidates, fetch_k)
+
+        ranked = self._vector_search_ranked(query, candidates, fetch_k)
+
+        results = self._hydrate_chunks(ranked, top_k=fetch_k)
 
         if boost_reasoning and results:
             for r in results:
@@ -185,29 +191,41 @@ class Neo4jVerdictRetriever:
         """
         return [r["vchunk_id"] for r in self._run_query(query, params)]
 
-    def _vector_search(self, query: str, candidate_ids: List[str],
-                       top_k: int) -> List[RetrievedVerdictChunk]:
-        """Vector search via Qdrant, then fetch metadata from Neo4j."""
+    def _vector_search_ranked(
+        self,
+        query: str,
+        candidate_ids: List[str],
+        top_k: int,
+    ) -> List[Tuple[str, float]]:
+        """Dense vector retrieval from Qdrant."""
+        if not self.embedding_model:
+            return []
+
         query_embedding = self.qdrant.encode(query)
 
         try:
-            qdrant_results = self.qdrant.search(
-                collection=VERDICT_COLLECTION,
+            return self.qdrant.search(
+                collection=self.collection_name,
                 query_embedding=query_embedding,
                 id_field="vchunk_id",
                 candidate_ids=candidate_ids,
                 top_k=top_k,
             )
         except Exception as e:
-            print(f"⚠️ Qdrant search failed: {e}, falling back to keyword search")
-            return self._keyword_search(query, candidate_ids, top_k)
+            print(f"⚠️ Qdrant search failed: {e}")
+            return []
 
-        if not qdrant_results:
-            return self._keyword_search(query, candidate_ids, top_k)
+    def _hydrate_chunks(
+        self,
+        ranked_vchunk_ids: List[Tuple[str, float]],
+        top_k: int,
+    ) -> List[RetrievedVerdictChunk]:
+        """Hydrate ranked verdict chunk IDs to full records via Neo4j."""
+        if not ranked_vchunk_ids:
+            return []
 
-        # Map vchunk_ids back to Neo4j for full metadata
-        vchunk_ids = [vid for vid, _ in qdrant_results]
-        score_map = {vid: score for vid, score in qdrant_results}
+        vchunk_ids = [vid for vid, _ in ranked_vchunk_ids[:top_k]]
+        score_map = {vid: score for vid, score in ranked_vchunk_ids}
 
         cypher = f"""
         UNWIND $vchunk_ids AS vid
@@ -216,37 +234,23 @@ class Neo4jVerdictRetriever:
         {_RETURN_CLAUSE}
         """
 
-        results = self._run_query(cypher, {"vchunk_ids": vchunk_ids})
-        chunks = []
-        for r in results:
+        rows = self._run_query(cypher, {"vchunk_ids": vchunk_ids})
+        row_map = {r["vchunk_id"]: r for r in rows if r.get("vchunk_id")}
+        chunks: List[RetrievedVerdictChunk] = []
+        for vid in vchunk_ids:
+            r = row_map.get(vid)
+            if not r:
+                continue
             chunk = RetrievedVerdictChunk.from_record(r)
-            chunk.score = score_map.get(r["vchunk_id"], 0)
+            chunk.score = score_map.get(vid, 0.0)
             chunks.append(chunk)
 
         return chunks
 
-    def _keyword_search(self, query: str, candidate_ids: List[str],
-                        top_k: int) -> List[RetrievedVerdictChunk]:
-        keywords = [w.lower() for w in query.split() if len(w) > 2]
-        if not keywords:
-            return []
-
-        contains = " OR ".join(f"toLower(vc.content) CONTAINS '{kw}'" for kw in keywords[:5])
-        cypher = f"""
-        UNWIND $candidate_ids AS cid
-        MATCH (vc:VerdictChunk {{vchunk_id: cid}})-[:PART_OF_VERDICT]->(v:Verdict)
-        WHERE {contains}
-        WITH vc, v,
-             size([kw IN $keywords WHERE toLower(vc.content) CONTAINS kw]) AS match_count
-        WITH vc, v, toFloat(match_count) / size($keywords) AS score
-        ORDER BY score DESC
-        LIMIT $top_k
-        {_RETURN_CLAUSE}
-        """
-        results = self._run_query(cypher, {
-            "candidate_ids": candidate_ids, "keywords": keywords, "top_k": top_k,
-        })
-        return [RetrievedVerdictChunk.from_record(r) for r in results]
+    def _vector_search(self, query: str, candidate_ids: List[str], top_k: int) -> List[RetrievedVerdictChunk]:
+        """Backward-compatible wrapper for hydrated dense results."""
+        ranked = self._vector_search_ranked(query, candidate_ids, top_k)
+        return self._hydrate_chunks(ranked, top_k)
 
     def _expand_context(self, results: List[RetrievedVerdictChunk], window: int = 1):
         chunk_ids = [r.vchunk_id for r in results]

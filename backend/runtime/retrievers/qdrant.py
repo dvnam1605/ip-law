@@ -1,5 +1,5 @@
 """
-Shared Qdrant search client for hybrid retrieval.
+Shared Qdrant search client for dense retrieval.
 Used by neo4j_retriever and verdict_neo4j_retriever to perform
 vector search via Qdrant, then map results back to Neo4j for full context.
 """
@@ -18,7 +18,7 @@ VERDICT_COLLECTION = os.getenv("QDRANT_VERDICT_COLLECTION", "verdict_chunks")
 
 
 class QdrantSearchClient:
-    """Qdrant vector search client for hybrid RAG retrieval."""
+    """Qdrant vector search client for dense RAG retrieval."""
 
     def __init__(self, url: str = None, embedding_model_path: str = None):
         self.url = url or QDRANT_URL

@@ -32,6 +32,9 @@ shtt/
 ├── scripts/                    # Pipeline runners
 │   ├── run_legal_pipeline.py   # Chạy pipeline pháp luật
 │   └── run_verdict_pipeline.py # Chạy pipeline bản án
+├── benchmarks/                 # ViLeXa-style retrieval benchmark module
+│   ├── run_eval.py             # CLI benchmark legal/verdict retrievers
+│   └── README.md               # Hướng dẫn format dataset + chạy benchmark
 ├── docker-compose.yml          # Neo4j, Qdrant, PostgreSQL
 ├── requirements.txt            # Python dependencies cho Backend
 ├── frontend/package.json       # Node dependencies cho Frontend
@@ -149,6 +152,32 @@ Giao diện ứng dụng: http://localhost:5173
 | `QDRANT_URL` | `http://192.168.1.199:6333`| Kết nối Qdrant |
 | `QDRANT_LEGAL_COLLECTION` | `legal_chunks` | Tên collection pháp luật trong Qdrant |
 | `QDRANT_VERDICT_COLLECTION` | `verdict_chunks` | Tên collection bản án trong Qdrant |
+
+## 📊 Benchmark Retrieval (ViLeXa-style)
+
+Project hiện có module benchmark riêng tại [benchmarks/README.md](benchmarks/README.md), dùng format qrels giống ViLeXa/Zalo.
+
+### Chạy benchmark Legal
+
+```bash
+python -m benchmarks.run_eval \
+       --mode legal \
+       --data-dir data/your_benchmark \
+       --k-values 1,3,5,10,20
+```
+
+### Chạy benchmark Verdict
+
+```bash
+python -m benchmarks.run_eval \
+       --mode verdict \
+       --data-dir data/your_benchmark \
+       --k-values 1,3,5,10,20
+```
+
+Lưu ý mapping ID khi tạo qrels:
+- `legal` dùng `chunk_id`.
+- `verdict` dùng `vchunk_id`.
 
 ## 📝 License
 

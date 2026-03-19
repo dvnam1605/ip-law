@@ -1,19 +1,9 @@
-"""Retriever backends for legal and verdict pipelines."""
+"""Retriever package.
 
-from backend.runtime.retrievers.legal_retriever import Neo4jLegalRetriever, RetrievedChunk
-from backend.runtime.retrievers.verdict_retriever import Neo4jVerdictRetriever, RetrievedVerdictChunk
-from backend.runtime.retrievers.qdrant import (
-    QdrantSearchClient,
-    LEGAL_COLLECTION,
-    VERDICT_COLLECTION,
-)
+Import concrete modules directly, e.g.:
+- backend.runtime.retrievers.legal_retriever
+- backend.runtime.retrievers.verdict_retriever
+- backend.runtime.retrievers.qdrant
+"""
 
-__all__ = [
-    "Neo4jLegalRetriever",
-    "RetrievedChunk",
-    "Neo4jVerdictRetriever",
-    "RetrievedVerdictChunk",
-    "QdrantSearchClient",
-    "LEGAL_COLLECTION",
-    "VERDICT_COLLECTION",
-]
+__all__: list[str] = []

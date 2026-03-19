@@ -65,8 +65,8 @@ const MarkdownContent: React.FC<{ content: string }> = ({ content }) => {
         // Tables
         table({ children }) {
           return (
-            <div className="overflow-x-auto my-4 -mx-4 px-4 md:-mx-8 md:px-8 lg:-mx-24 lg:px-24">
-              <table className="min-w-full border-collapse border border-gray-300 dark:border-gray-700 rounded-lg overflow-hidden text-xs">
+            <div className="w-full overflow-x-auto my-4">
+              <table className="min-w-max w-full border-collapse border border-gray-300 dark:border-gray-700 rounded-lg text-xs">
                 {children}
               </table>
             </div>
@@ -90,7 +90,7 @@ const MarkdownContent: React.FC<{ content: string }> = ({ content }) => {
         },
         td({ children }) {
           return (
-            <td className="px-2 py-2 text-xs text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 max-w-[200px] truncate">
+            <td className="px-2 py-2 text-xs text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 align-top whitespace-normal break-words min-w-[140px]">
               {children}
             </td>
           );
