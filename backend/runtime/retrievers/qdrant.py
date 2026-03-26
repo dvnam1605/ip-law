@@ -4,9 +4,10 @@ Used by neo4j_retriever and verdict_neo4j_retriever to perform
 vector search via Qdrant, then map results back to Neo4j for full context.
 """
 import os
+import asyncio
 from typing import List, Tuple, Optional
 
-from qdrant_client import QdrantClient
+from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchAny
 
 from sentence_transformers import SentenceTransformer
@@ -18,11 +19,11 @@ VERDICT_COLLECTION = os.getenv("QDRANT_VERDICT_COLLECTION", "verdict_chunks")
 
 
 class QdrantSearchClient:
-    """Qdrant vector search client for dense RAG retrieval."""
+    """Async Qdrant vector search client for dense RAG retrieval."""
 
     def __init__(self, url: str = None, embedding_model_path: str = None):
         self.url = url or QDRANT_URL
-        self.client = QdrantClient(url=self.url)
+        self.client = AsyncQdrantClient(url=self.url)
 
         self.embedding_model = None
         if embedding_model_path and os.path.exists(embedding_model_path):
@@ -31,12 +32,15 @@ class QdrantSearchClient:
             dim = self.embedding_model.get_sentence_embedding_dimension()
             print(f"Model loaded. Dimension: {dim}")
 
-    def encode(self, query: str) -> List[float]:
+    async def encode(self, query: str) -> List[float]:
+        """Encodes a query string into a vector. Non-blocking via to_thread."""
         if not self.embedding_model:
             raise ValueError("Embedding model not loaded")
-        return self.embedding_model.encode(query).tolist()
+        # Run CPU-bound encoding in a thread to avoid blocking the event loop
+        embedding = await asyncio.to_thread(self.embedding_model.encode, query)
+        return embedding.tolist()
 
-    def search(
+    async def search(
         self,
         collection: str,
         query_embedding: List[float],
@@ -45,7 +49,7 @@ class QdrantSearchClient:
         top_k: int = 10,
     ) -> List[Tuple[str, float]]:
         """
-        Search Qdrant for similar vectors.
+        Search Qdrant for similar vectors asynchronously.
 
         Args:
             collection: Qdrant collection name
@@ -68,7 +72,7 @@ class QdrantSearchClient:
                 ]
             )
 
-        results = self.client.query_points(
+        results = await self.client.query_points(
             collection_name=collection,
             query=query_embedding,
             query_filter=query_filter,
@@ -78,5 +82,5 @@ class QdrantSearchClient:
 
         return [(hit.payload[id_field], hit.score) for hit in results.points]
 
-    def close(self):
-        self.client.close()
+    async def close(self):
+        await self.client.close()

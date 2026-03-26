@@ -1,129 +1,39 @@
-import re
 import os
-from typing import List, Dict, Any, Literal
+import asyncio
+import logging
+from typing import List, Optional, AsyncGenerator, Any, Dict
 from pathlib import Path
 from dotenv import load_dotenv
-from concurrent.futures import ThreadPoolExecutor
-from backend.core.config import config
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-load_dotenv(PROJECT_ROOT / ".env")
 
 from google import genai
 from google.genai import types
 
+from backend.core.config import config
 from backend.core.pipeline.rag_pipeline import format_history
+from backend.core.router_constants import (
+    RouteType,
+    COMBINED_SYSTEM_PROMPT
+)
+from backend.core.routing_strategies import (
+    classify_query_with_strategies,
+    DEFAULT_STRATEGIES,
+    RoutingStrategy
+)
 
-RouteType = Literal['legal', 'verdict', 'combined', 'trademark']
+# Setup logging
+logger = logging.getLogger(__name__)
 
-VERDICT_KEYWORDS = [
-    r'tình huống', r'bồi thường', r'khởi kiện', r'kiện', r'phản tố',
-    r'tòa\s*(án)?\s*(sẽ|đã|xử|xét)', r'bị đơn', r'nguyên đơn',
-    r'bản án', r'án lệ', r'xâm phạm', r'vi phạm.*quyền',
-    r'thiệt hại', r'bồi hoàn', r'xin lỗi.*công khai', r'đăng báo',
-    r'công ty.*(?:tôi|chúng tôi)', r'tôi\s*(?:phát hiện|muốn|cần|nên)',
-    r'nên\s*(?:làm|xử lý|kiện|khởi)', r'hướng giải quyết',
-    r'phán quyết', r'nhận định', r'tranh chấp',
-    r'sao chép', r'hàng nhái', r'hàng giả',
-]
-
-LEGAL_KEYWORDS = [
-    r'(?:điều|khoản)\s*\d+', r'quy định', r'luật\s+(?:nào|gì|nói)',
-    r'thủ tục', r'điều kiện\s*(?:đăng ký|cấp|bảo hộ)',
-    r'thời hạn\s*(?:bảo hộ|đăng ký|khiếu nại)',
-    r'nghị định', r'thông tư', r'hướng dẫn',
-    r'đối tượng.*bảo hộ', r'quyền.*(?:tác giả|sáng chế|nhãn hiệu)',
-    r'đăng ký.*(?:nhãn hiệu|sáng chế|kiểu dáng)',
-    r'(?:mức|hình thức).*xử phạt', r'phân biệt.*(?:giữa|và)',
-]
-
-TRADEMARK_KEYWORDS = [
-    r'tra\s*cứu.*nhãn\s*hiệu', r'nhãn\s*hiệu.*đã\s*đăng\s*ký',
-    r'nhãn\s*hiệu.*tương\s*tự', r'xung\s*đột.*nhãn\s*hiệu',
-    r'đăng\s*ký.*nhãn\s*hiệu.*(?:chưa|được\s*không|có\s*thể)',
-    r'kiểm\s*tra.*nhãn\s*hiệu', r'trademark',
-    r'tên\s*thương\s*(?:mại|hiệu).*(?:trùng|giống|tương\s*tự)',
-    r'brand.*(?:search|lookup|check)',
-    r'nhãn\s*hiệu.*(?:trùng|giống|xem|check|có\s*ai)',
-    r'logo.*(?:đã\s*đăng\s*ký|trùng|giống)',
-    r'thương\s*hiệu.*(?:đã\s*có|đã\s*đăng|trùng|xung\s*đột)',
-]
-
-# Patterns that signal user wants practical advice (situation + "what should I do?")
-# These questions inherently need BOTH legal framework + case-law reference → combined
-ADVISORY_PATTERNS = [
-    r'(?:tôi|chúng tôi)\s*(?:phát hiện|phát\s*hiện\s*ra).*(?:nên|cần|phải|làm)',
-    r'(?:nên|cần|phải)\s*(?:làm\s*(?:gì|thế\s*nào|sao)|xử\s*lý\s*(?:thế\s*nào|ra\s*sao))',
-    r'(?:bước|cách)\s*(?:xử\s*lý|giải\s*quyết|khiếu\s*nại|khởi\s*kiện)',
-    r'(?:tôi|chúng tôi)\s*(?:bị|đã bị|đang bị).*(?:nên|cần|phải|làm)',
-    r'(?:phát hiện|phát\shien).*(?:sử dụng|dùng|copy|sao chép|làm nhái|làm giả)',
-    r'(?:xử\s*lý|giải\s*quyết|bảo\s*vệ).*(?:thế\s*nào|như\s*thế\s*nào|ra\s*sao)',
-    r'(?:tôi|chúng tôi).*(?:logo|nhãn hiệu|thương hiệu|sáng chế|tác phẩm|thiết kế).*(?:bị|đang)',
-    r'(?:bên khác|đối thủ|công ty khác|người khác).*(?:sử dụng|dùng|copy|sao chép|bắt chước)',
-]
-
-
-def classify_query(query: str) -> RouteType:
-    q = query.lower()
-    verdict_score = sum(1 for p in VERDICT_KEYWORDS if re.search(p, q))
-    legal_score = sum(1 for p in LEGAL_KEYWORDS if re.search(p, q))
-    trademark_score = sum(1 for p in TRADEMARK_KEYWORDS if re.search(p, q))
-    advisory_hit = any(re.search(p, q) for p in ADVISORY_PATTERNS)
-
-    # Trademark intent takes priority when strong signal
-    if trademark_score >= 2:
-        return 'trademark'
-    if trademark_score >= 1 and verdict_score == 0 and legal_score <= 1:
-        return 'trademark'
-
-    # Advisory intent (situation + asking what to do) → always combined
-    if advisory_hit and verdict_score >= 1:
-        return 'combined'
-
-    if verdict_score >= 2 and legal_score >= 2:
-        return 'combined'
-    if verdict_score > legal_score and verdict_score >= 2:
-        return 'verdict'
-    if legal_score > verdict_score and legal_score >= 1:
-        return 'legal'
-    if verdict_score >= 1:
-        return 'combined'
-    return 'legal'
-
-
-COMBINED_SYSTEM_PROMPT = """Bạn là Chuyên gia Pháp lý AI chuyên tư vấn Luật Sở hữu trí tuệ Việt Nam. Bạn có 2 nguồn dữ liệu:
-- [VĂN BẢN PHÁP LUẬT]: Các điều luật, nghị định, thông tư hiện hành
-- [BẢN ÁN THAM KHẢO]: Các bản án thực tế đã xét xử
-
-## NGUYÊN TẮC TUYỆT ĐỐI:
-1. **ZERO HALLUCINATION**: CHỈ trích dẫn điều luật và bản án có trong dữ liệu bên dưới. KHÔNG tự bịa ra bất kỳ số hiệu văn bản, số bản án, hay nội dung nào không có trong nguồn cung cấp.
-2. Phân biệt rõ: đâu là quy định pháp luật (nên, phải, được phép) và đâu là thực tiễn xét xử (Tòa đã xử thế nào).
-3. Ngôn ngữ thận trọng: "Dựa trên thực tiễn xét xử...", "Theo quy định tại...", "Nhiều khả năng..."
-4. Nếu dữ liệu không đủ, thừa nhận giới hạn.
-
-## CÁCH TRẢ LỜI:
-
-1. **Vấn đề pháp lý**: Xác định vấn đề cốt lõi (2-3 câu).
-
-2. **Cơ sở pháp luật**: Trích dẫn các điều luật liên quan từ [VĂN BẢN PHÁP LUẬT]:
-   - Quyền của chủ sở hữu, hành vi bị cấm, thủ tục xử lý
-   - Trích: "Theo Điều X Luật Y..."
-
-3. **Thực tiễn xét xử**: Đối chiếu với [BẢN ÁN THAM KHẢO] (CHỈ các bản án có trong danh sách):
-   - Tòa đã nhận định và phán quyết thế nào trong vụ tương tự
-   - Trích: "Theo Bản án số X, Tòa nhận định..."
-
-4. **Tư vấn hướng xử lý**: Kết hợp cả luật và thực tiễn:
-   - Các bước nên làm (theo quy trình luật định)
-   - Dự đoán kết quả (dựa trên bản án tương tự)
-   - Mức bồi thường/xử phạt tham khảo
-
-5. **Kết luận**: Lời khuyên chốt lại + nhắc tham vấn luật sư.
-"""
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 class SmartRouter:
-    _instance = None
+    """
+    Orchestrates routing between specialized RAG pipelines and a combined hybrid pipeline.
+    Supports Dependency Injection for pipelines and routing strategies.
+    Implements a thread-safe Singleton pattern.
+    """
+    _instance: Optional['SmartRouter'] = None
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -131,78 +41,106 @@ class SmartRouter:
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self):
+    def __init__(
+        self,
+        legal_pipeline: Any = None,
+        verdict_pipeline: Any = None,
+        trademark_pipeline: Any = None,
+        routing_strategies: Dict[str, RoutingStrategy] = None,
+        gemini_client: Any = None
+    ):
         if self._initialized:
             return
+        
+        self.legal_pipeline = legal_pipeline
+        self.verdict_pipeline = verdict_pipeline
+        self.trademark_pipeline = trademark_pipeline
+        self.strategies = routing_strategies or DEFAULT_STRATEGIES
+
+        api_key = os.getenv("GEMINI_API_KEY") or config.GEMINI_API_KEY
+        model_name = os.getenv("GEMINI_MODEL") or config.GEMINI_MODEL
+        
+        self.client = gemini_client or genai.Client(api_key=api_key)
+        self.combined_model_name = model_name
+        self.combined_system_instruction = COMBINED_SYSTEM_PROMPT
+        
+        self._initialized = True
+        logger.info("Smart Router initialized with Async support and Dependency Injection")
+
+    def _ensure_pipelines(self):
+        """Lazy load pipelines if not already provided via DI."""
         from backend.core.pipeline.rag_pipeline import get_pipeline
         from backend.core.pipeline.verdict_rag_pipeline import get_verdict_pipeline
         from backend.core.pipeline.trademark_pipeline import get_trademark_pipeline
 
-        self.legal_pipeline = get_pipeline()
-        self.verdict_pipeline = get_verdict_pipeline()
-        self.trademark_pipeline = get_trademark_pipeline()
+        if not self.legal_pipeline:
+            self.legal_pipeline = get_pipeline()
+        if not self.verdict_pipeline:
+            self.verdict_pipeline = get_verdict_pipeline()
+        if not self.trademark_pipeline:
+            self.trademark_pipeline = get_trademark_pipeline()
 
-        api_key = os.getenv("GEMINI_API_KEY") or config.GEMINI_API_KEY
-        model_name = os.getenv("GEMINI_MODEL") or config.GEMINI_MODEL
-        self.client = genai.Client(api_key=api_key)
-        self.combined_model_name = model_name
-        self.combined_system_instruction = COMBINED_SYSTEM_PROMPT
-        self._initialized = True
-        print("✅ Smart Router ready")
-
-    async def route_and_stream(self, query: str, history: list = None):
-        route = classify_query(query)
+    async def route_and_stream(self, query: str, history: Optional[List[Dict[str, str]]] = None) -> AsyncGenerator[str, None]:
+        """
+        Determines the route and streams the response from the appropriate pipeline.
+        Uses native await for async-ready pipelines.
+        """
+        self._ensure_pipelines()
+        route = classify_query_with_strategies(query, self.strategies)
         yield f"__ROUTE__{route}__"
 
-        if route == 'legal':
-            async for chunk in self.legal_pipeline.query_stream(query=query, history=history):
-                yield chunk
-        elif route == 'verdict':
-            async for chunk in self.verdict_pipeline.query_stream(query=query, history=history):
-                yield chunk
-        elif route == 'trademark':
-            async for chunk in self.trademark_pipeline.analyze_stream(query=query, history=history):
-                yield chunk
-        else:
-            async for chunk in self._combined_stream(query, history=history):
-                yield chunk
+        try:
+            if route == 'legal':
+                async for chunk in self.legal_pipeline.query_stream(query=query, history=history):
+                    yield chunk
+            elif route == 'verdict':
+                async for chunk in self.verdict_pipeline.query_stream(query=query, history=history):
+                    yield chunk
+            elif route == 'trademark':
+                # Trademark pipeline analyze_stream is currently sync-wrapped in some implementations, 
+                # but we'll call it directly and assume it's an async generator.
+                async for chunk in self.trademark_pipeline.analyze_stream(query=query, history=history):
+                    yield chunk
+            else:
+                async for chunk in self._combined_stream(query, history=history):
+                    yield chunk
+        except Exception as e:
+            logger.exception("Error in route_and_stream for route %s: %s", route, e)
+            yield f"\n[Lỗi hệ thống]: Đã xảy ra lỗi khi xử lý yêu cầu ({route}). Vui lòng thử lại sau."
 
-    async def _combined_stream(self, query: str, history: list = None):
-        import asyncio
-        
-        legal_ctx = None
-        verdict_ctx = None
-        verdict_results = None
-
-        def fetch_legal():
-            nonlocal legal_ctx
-            results = self.legal_pipeline.retriever.search(
+    async def _combined_stream(self, query: str, history: Optional[List[Dict[str, str]]] = None) -> AsyncGenerator[str, None]:
+        """
+        Executes a hybrid retrieval from both legal and verdict pipelines and synthesizes an answer.
+        Uses native asyncio.gather with await for improved performance.
+        """
+        # Run retrievals in parallel using native await
+        try:
+            legal_task = self.legal_pipeline.retriever.search(
                 query=query, top_k=5, expand_context=True, context_window=1
             )
-            if results:
-                legal_ctx = self.legal_pipeline._format_context(results)
+            verdict_task = self.verdict_pipeline.retriever.search(
+                query=query, top_k=8, expand_context=True, context_window=1, boost_reasoning=True
+            )
+            
+            legal_results, verdict_results = await asyncio.gather(legal_task, verdict_task)
+        except Exception as e:
+            logger.error("Combined retrieval failed: %s", e)
+            yield "Xin lỗi, đã có lỗi xảy ra khi truy xuất dữ liệu."
+            return
 
-        def fetch_verdict():
-            nonlocal verdict_ctx, verdict_results
-            results = self.verdict_pipeline._retrieve(query, top_k=8, ip_types=None, trial_level=None)
-            if results:
-                verdict_results = results
-                verdict_ctx = self.verdict_pipeline._format_context(results)
-
-        await asyncio.gather(
-            asyncio.to_thread(fetch_legal),
-            asyncio.to_thread(fetch_verdict),
-        )
+        legal_ctx = self.legal_pipeline._format_context(legal_results) if legal_results else ""
+        verdict_ctx = self.verdict_pipeline._format_context(verdict_results) if verdict_results else ""
 
         if not legal_ctx and not verdict_ctx:
-            yield "Xin lỗi, tôi không tìm thấy dữ liệu liên quan trong cơ sở dữ liệu."
+            yield "Xin lỗi, tôi không tìm thấy dữ liệu liên quan trong cơ sở dữ liệu pháp luật và bản án."
             return
 
         context_parts = []
         if legal_ctx:
             context_parts.append(f"[VĂN BẢN PHÁP LUẬT]:\n{legal_ctx}")
+        
         if verdict_ctx:
-            case_list = self.verdict_pipeline._case_list(verdict_results) if verdict_results else ""
+            case_list = self.verdict_pipeline._case_list(verdict_results) if verdict_results else "Không rõ"
             context_parts.append(
                 f"[BẢN ÁN THAM KHẢO] (CHỈ các bản án sau được phép trích dẫn: {case_list}):\n{verdict_ctx}"
             )
@@ -216,21 +154,34 @@ CÂU HỎI: {query}
 NHẮC LẠI: CHỈ trích dẫn điều luật và bản án có trong dữ liệu trên. KHÔNG nhắc đến bất kỳ nguồn nào khác.
 Hãy tư vấn toàn diện, kết hợp cả quy định pháp luật lẫn thực tiễn xét xử.
 """
-        response = await self.client.aio.models.generate_content_stream(
-            model=self.combined_model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=self.combined_system_instruction,
+        try:
+            response = await self.client.aio.models.generate_content_stream(
+                model=self.combined_model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=self.combined_system_instruction,
+                )
             )
-        )
-        async for chunk in response:
-            if chunk.text:
-                yield chunk.text
+            async for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+        except Exception as e:
+            logger.error("Gemini synthesis failed in combined mode: %s", e)
+            yield "\n[Lỗi]: Không thể tổng hợp câu trả lời từ LLM."
 
-    def close(self):
+    async def close(self):
+        """Asynchronously closes all pipelines and resets the singleton instance."""
+        self._ensure_pipelines()
+        await asyncio.gather(
+            self.legal_pipeline.close(),
+            self.verdict_pipeline.close(),
+            self.trademark_pipeline.close()
+        )
         SmartRouter._instance = None
         self._initialized = False
+        logger.info("Smart Router closed")
 
 
 def get_smart_router() -> SmartRouter:
+    """Factory function to get the SmartRouter singleton."""
     return SmartRouter()

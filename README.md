@@ -1,184 +1,162 @@
-# 🏛️ Legal RAG Chatbot - Tư vấn Pháp luật Việt Nam
+# 🏛️ SHTT Legal RAG: Vietnamese Intellectual Property Assistant
 
-Hệ thống RAG (Retrieval-Augmented Generation) cho tư vấn pháp luật và bản án sở hữu trí tuệ Việt Nam. Hệ thống sử dụng kiến trúc lai (Hybrid Architecture) kết hợp **Qdrant** (Vector Search) và **Neo4j** (Graph Database) cùng với Gemini AI.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg)](https://fastapi.tiangolo.com/)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 📁 Cấu trúc dự án
+**SHTT Legal RAG** (Sở Hữu Trí Tuệ) is a specialized AI-powered assistant designed for Vietnamese Intellectual Property Law. It leverages a **Hybrid RAG (Retrieval-Augmented Generation)** architecture, combining Graph Databases and Vector Search to provide accurate, context-aware legal advice and trademark search capabilities.
 
-```text
-shtt/
-├── backend/
-│   ├── api/                    # FastAPI application
-│   │   └── app.py              # API entrypoint & routes registration
-│   ├── core/
-│   │   ├── pipeline/           # RAG pipelines
-│   │   │   ├── rag_pipeline.py
-│   │   │   ├── verdict_rag_pipeline.py
-│   │   │   └── trademark_pipeline.py
-│   │   ├── smart_router.py     # Router legal/verdict/trademark/combined
-│   │   ├── config.py           # Centralized settings
-│   │   └── security.py         # JWT + password utilities
-│   ├── runtime/
-│   │   └── retrievers/         # Runtime retrievers (Neo4j + Qdrant hybrid)
-│   ├── tooling/                # Offline ingestion/crawler scripts as importable modules
-│   ├── chunking/               # Document processing & Upload
-│   │   ├── legal_chunker.py    # Chunking & Embedding pháp luật
-│   │   ├── verdict_chunker.py  # Chunking & Embedding bản án
-│   │   └── verdict_extractors.py # Trích xuất metadata bản án
-│   ├── services/               # Service layer used by API routes
-├── frontend/                   # React + Vite Chat App UI
-├── data/
-│   ├── models/                 # Vietnamese embedding model
-│   └── processed/              # Source legal & verdict TXT files
-├── scripts/                    # Pipeline runners
-│   ├── run_legal_pipeline.py   # Chạy pipeline pháp luật
-│   └── run_verdict_pipeline.py # Chạy pipeline bản án
-├── benchmarks/                 # ViLeXa-style retrieval benchmark module
-│   ├── run_eval.py             # CLI benchmark legal/verdict retrievers
-│   └── README.md               # Hướng dẫn format dataset + chạy benchmark
-├── docker-compose.yml          # Neo4j, Qdrant, PostgreSQL
-├── requirements.txt            # Python dependencies cho Backend
-├── frontend/package.json       # Node dependencies cho Frontend
-└── .env                        # Environment variables
-```
+---
 
-## 🚀 Cài đặt
+## 🚀 Key Features
 
-### 1. Khởi động các Database (Neo4j, Qdrant, Postgres)
+- **Hybrid RAG Architecture**: Integrates **Qdrant** (Vector Search) for semantic similarity and **Neo4j** (Graph Database) for structured legal relationships and context expansion.
+- **Vietnamese IP Law Focus**: Optimized for Vietnamese legal documents using specialized embedding models (PhoBERT-based).
+- **Verdict Analysis**: Advanced processing of court verdicts with automated metadata extraction.
+- **Trademark Search & Crawler**: Integrated tools for crawling and searching Vietnamese trademark databases.
+- **Streaming Response**: Real-time message streaming for a smooth user experience.
+- **Comprehensive Benchmarking**: Built-in evaluation module following the ViLeXa/Zalo AI challenge standards.
 
+---
+
+## 🏗️ Architecture
+
+The system uses a unique hybrid approach to ensure high precision and recall in legal retrieval:
+
+1.  **Neo4j Pre-filter**: Filters document IDs based on structured metadata (status, effective date, etc.).
+2.  **Qdrant Vector Search**: Performs high-speed ANN (Approximate Nearest Neighbor) search on the filtered ID list.
+3.  **Context Expansion**: Re-traverses the Graph in Neo4j to retrieve neighboring chunks (`NEXT`/`PREV` relationships) to provide the LLM with full context.
+4.  **LLM Synthesis**: Uses Google Gemini AI to synthesize the final answer from retrieved context and chat history.
+
+---
+
+## 🛠️ Tech Stack
+
+### Backend
+- **Framework**: FastAPI (Python 3.12+)
+- **Vector DB**: Qdrant
+- **Graph DB**: Neo4j
+- **Relational DB**: PostgreSQL (Auth & Trademark data)
+- **AI/ML**: LangChain, Sentence-Transformers (PhoBERT), Google Gemini API
+- **Crawler**: Playwright
+
+### Frontend
+- **Framework**: React 19 + Vite
+- **Styling**: Tailwind CSS
+- **Icons**: Lucide React
+- **Data Viz**: Recharts
+
+---
+
+## 📦 Installation
+
+### Prerequisites
+- [Docker & Docker Compose](https://www.docker.com/)
+- [Conda](https://docs.conda.io/en/latest/) or Python 3.10+
+- [Node.js & npm](https://nodejs.org/)
+
+### 1. Infrastructure Setup
+Spin up the database cluster (PostgreSQL, Neo4j, Qdrant):
 ```bash
 docker-compose up -d
 ```
-- Qdrant Dashboard: http://localhost:6333/dashboard
-- Neo4j Browser: http://localhost:7474
+- **Neo4j Browser**: [http://localhost:7474](http://localhost:7474)
+- **Qdrant Dashboard**: [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
 
-### 2. Cài đặt Backend
-
+### 2. Backend Setup
 ```bash
-# Tạo môi trường conda
-conda create -n shtt python=3.12
+# Create environment
+conda create -n shtt python=3.12 -y
 conda activate shtt
 
-# Cài đặt dependencies
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Cài đặt Frontend
-
+### 3. Frontend Setup
 ```bash
 cd frontend
 npm install
 ```
 
-### 4. Cấu hình environment variables
-
-Tạo file `.env` tại thư mục gốc:
-
+### 4. Configuration
+Create a `.env` file in the root directory:
 ```env
-NEO4J_URI=bolt://127.0.0.1:7687
+# Database
+NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_password
-GEMINI_API_KEY=your_gemini_api_key
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
 POSTGRES_DB=legal_rag
+
+# AI Keys
+GEMINI_API_KEY=your_gemini_key
+
+# Qdrant
+QDRANT_URL=http://localhost:6333
 ```
 
-## 🔄 Data Pipeline (Hybrid Architecture)
+---
 
-Quy trình nhập dữ liệu (Ingestion) được chia thành 2 bước để tận dụng sức mạnh của cả Qdrant và Neo4j:
+## 🏃 Quick Start
 
-### Chạy các scripts tự động
-
+### 1. Data Ingestion
+Populate your databases with legal documents and verdicts:
 ```bash
-# 1. Pipeline cho Pháp luật
+# Ingest Legal Documents
 python scripts/run_legal_pipeline.py
 
-# 2. Pipeline cho Bản án
+# Ingest Court Verdicts
 python scripts/run_verdict_pipeline.py
 ```
 
-### Luồng xử lý chi tiết (Bên trong scripts):
-1. **Chunking & Embedding (Qdrant)**
-   - Đọc files TXT, chia chunk (Rule-based cho luật, NLP cho bản án).
-   - Tạo embedding (độ dài 1024) bằng mô hình tiếng Việt.
-   - Upload trực tiếp vector lên **Qdrant** cùng ID của chunk (`chunk_id`).
-   - Lưu metadata ra file JSON làm đầu vào cho bước 2.
-2. **Graph Ingestion (Neo4j)**
-   - Lấy metadata và danh sách IDs từ JSON ở bước 1.
-   - Tạo nodes (Document, Verdict, Chunk) vào Neo4j (nhưng **không lưu embedding** để giảm tải dung lượng).
-   - Khởi tạo các relationships (thứ tự chunk `NEXT`, quan hệ `PART_OF`, v.v.).
-
-## 🔍 Hybrid RAG Pipeline Flow
-
-Khi User hỏi một câu hỏi:
-
-```text
-1. User Query
-       ↓
-2. Neo4j Pre-filter (Chỉ lấy IDs của các chunks thuộc các documents hợp lệ: status=active, năm ban hành...)
-       ↓
-3. Qdrant Vector Search (ANN Search cực nhanh chỉ trên các list ID đã filter từ bước 2)
-       ↓
-4. Neo4j Context Expansion (Lấy chunk_ids trả về từ Qdrant, vào lại Neo4j lấy FULL_TEXT của chunk + các chunks lân cận (NEXT/PREV) để mở rộng ngữ cảnh)
-       ↓
-5. LLM Synthesis (Gửi cho Gemini AI kèm Lịch sử Chat)
-       ↓
-6. Response Streaming (Frontend render chữ theo dạng stream)
-```
-
-## 🔧 Chạy ứng dụng
-
-### 1. Chạy Backend (API Server)
+### 2. Run Servers
+**Backend:**
 ```bash
 cd backend/api
-conda activate shtt
 python app.py
 ```
-API Documentation: http://localhost:1605/docs
+*API Docs: [http://localhost:1605/docs](http://localhost:1605/docs)*
 
-### 2. Chạy Frontend (Chat UI)
+**Frontend:**
 ```bash
 cd frontend
 npm run dev
 ```
-Giao diện ứng dụng: http://localhost:5173
+*UI: [http://localhost:5173](http://localhost:5173)*
 
-## ⚙️ Cấu hình Backend
+---
 
-| Variable | Default | Mô tả |
-|----------|---------|-------|
-| `GEMINI_API_KEY` | - | API key cho Gemini |
-| `NEO4J_URI` | `bolt://127.0.0.1:7687` | Kết nối Neo4j |
-| `QDRANT_URL` | `http://192.168.1.199:6333`| Kết nối Qdrant |
-| `QDRANT_LEGAL_COLLECTION` | `legal_chunks` | Tên collection pháp luật trong Qdrant |
-| `QDRANT_VERDICT_COLLECTION` | `verdict_chunks` | Tên collection bản án trong Qdrant |
+## 📡 API Documentation
 
-## 📊 Benchmark Retrieval (ViLeXa-style)
+### Key Endpoints
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/query/stream` | Streamed RAG query for legal questions. |
+| `POST` | `/api/smart/query/stream` | Intelligent router between Legal, Verdict, and Trademark. |
+| `GET`  | `/api/trademark/search` | Search for registered trademarks. |
+| `POST` | `/api/auth/login` | User authentication and JWT issuance. |
 
-Project hiện có module benchmark riêng tại [benchmarks/README.md](benchmarks/README.md), dùng format qrels giống ViLeXa/Zalo.
+---
 
-### Chạy benchmark Legal
+## 📊 Evaluation (ViLeXa-style)
 
+The project includes a robust benchmarking tool to measure retrieval performance:
 ```bash
 python -m benchmarks.run_eval \
        --mode legal \
-       --data-dir data/your_benchmark \
-       --k-values 1,3,5,10,20
+       --data-dir data/internal_legal_benchmark \
+       --k-values 1,5,10
 ```
 
-### Chạy benchmark Verdict
+---
 
-```bash
-python -m benchmarks.run_eval \
-       --mode verdict \
-       --data-dir data/your_benchmark \
-       --k-values 1,3,5,10,20
-```
+## 📄 License
 
-Lưu ý mapping ID khi tạo qrels:
-- `legal` dùng `chunk_id`.
-- `verdict` dùng `vchunk_id`.
+Distributed under the MIT License. See `LICENSE` for more information.
 
-## 📝 License
+---
 
-MIT License
+

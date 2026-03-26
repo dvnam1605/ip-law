@@ -1,11 +1,12 @@
 import os
+import asyncio
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from dataclasses import dataclass
 from backend.core.config import config
 
 try:
-    from neo4j import GraphDatabase
+    from neo4j import AsyncGraphDatabase
     NEO4J_AVAILABLE = True
 except ImportError:
     NEO4J_AVAILABLE = False
@@ -31,7 +32,7 @@ class RetrievedChunk:
 
 class Neo4jLegalRetriever:
     """
-    Dense Retrieval Flow:
+    Async Dense Retrieval Flow:
     1. Neo4j Cypher filter: văn bản đang có hiệu lực
     2. Qdrant vector search trên tập đã lọc
     3. Neo4j NEXT để lấy đủ context
@@ -52,7 +53,7 @@ class Neo4jLegalRetriever:
         self.user = user or os.getenv("NEO4J_USER") or config.NEO4J_USER
         self.password = password or os.getenv("NEO4J_PASSWORD") or config.NEO4J_PASSWORD
 
-        self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
+        self.driver = AsyncGraphDatabase.driver(self.uri, auth=(self.user, self.password))
 
         # Qdrant client for vector search
         self.qdrant = QdrantSearchClient(
@@ -66,19 +67,20 @@ class Neo4jLegalRetriever:
         # Project-wide setting: dense-only retrieval.
         self.use_neo4j_prefilter = (os.getenv("LEGAL_PREFILTER_NEO4J", "0").strip().lower() in {"1", "true", "yes", "on"})
 
-    def close(self):
-        self.driver.close()
-        self.qdrant.close()
+    async def close(self):
+        await self.driver.close()
+        await self.qdrant.close()
 
-    def _run_query(self, query: str, params: Dict = None) -> List[Dict]:
-        with self.driver.session() as session:
-            result = session.run(query, params or {})
-            return [record.data() for record in result]
+    async def _run_query(self, query: str, params: Dict = None) -> List[Dict]:
+        async with self.driver.session() as session:
+            result = await session.run(query, params or {})
+            records = await result.data()
+            return records
 
-    def encode_query(self, query: str) -> List[float]:
-        return self.qdrant.encode(query)
+    async def encode_query(self, query: str) -> List[float]:
+        return await self.qdrant.encode(query)
 
-    def search(
+    async def search(
         self,
         query: str,
         query_date: str = None,
@@ -92,22 +94,20 @@ class Neo4jLegalRetriever:
         if self.use_neo4j_prefilter:
             if query_date is None:
                 query_date = datetime.now().strftime("%Y-%m-%d")
-            candidates = self._filter_by_validity(query_date, doc_types, status)
+            candidates = await self._filter_by_validity(query_date, doc_types, status)
             if not candidates:
-                print("⚠️ No valid documents found for the given criteria")
                 return []
-            print(f"📋 Found {len(candidates)} candidate chunks after filtering")
 
-        ranked = self._vector_search_ranked(query, candidates, top_k=top_k)
+        ranked = await self._vector_search_ranked(query, candidates, top_k=top_k)
 
-        results = self._hydrate_chunks(ranked, top_k=top_k)
+        results = await self._hydrate_chunks(ranked, top_k=top_k)
 
         if expand_context and results:
-            results = self._expand_context(results, context_window)
+            results = await self._expand_context(results, context_window)
 
         return results
 
-    def search_ids(
+    async def search_ids(
         self,
         query: str,
         query_date: str = None,
@@ -115,25 +115,18 @@ class Neo4jLegalRetriever:
         status: str = "active",
         top_k: int = 10,
     ) -> List[str]:
-        """Benchmark-friendly retrieval: return ranked IDs directly from retrieval stage.
-
-        This intentionally skips Neo4j hydration/context expansion so benchmark metrics
-        evaluate pure retrieval quality.
-        """
         candidates = None
-        print(self.use_neo4j_prefilter)
         if self.use_neo4j_prefilter:
             if query_date is None:
                 query_date = datetime.now().strftime("%Y-%m-%d")
-            candidates = self._filter_by_validity(query_date, doc_types, status)
+            candidates = await self._filter_by_validity(query_date, doc_types, status)
             if not candidates:
                 return []
 
-        ranked = self._vector_search_ranked(query, candidates, top_k=top_k)
-
+        ranked = await self._vector_search_ranked(query, candidates, top_k=top_k)
         return [cid for cid, _ in ranked[:top_k]]
 
-    def _filter_by_validity(
+    async def _filter_by_validity(
         self,
         query_date: str,
         doc_types: List[str] = None,
@@ -157,10 +150,10 @@ class Neo4jLegalRetriever:
         RETURN c.chunk_id AS chunk_id
         """
 
-        results = self._run_query(query, params)
+        results = await self._run_query(query, params)
         return [r["chunk_id"] for r in results]
 
-    def _vector_search_ranked(
+    async def _vector_search_ranked(
         self,
         query: str,
         candidate_ids: List[str],
@@ -170,10 +163,10 @@ class Neo4jLegalRetriever:
         if not self.embedding_model:
             return []
 
-        query_embedding = self.qdrant.encode(query)
+        query_embedding = await self.qdrant.encode(query)
 
         try:
-            return self.qdrant.search(
+            return await self.qdrant.search(
                 collection=self.collection_name,
                 query_embedding=query_embedding,
                 id_field="chunk_id",
@@ -184,7 +177,7 @@ class Neo4jLegalRetriever:
             print(f"⚠️ Qdrant search failed: {e}")
             return []
 
-    def _hydrate_chunks(
+    async def _hydrate_chunks(
         self,
         ranked_chunk_ids: List[Tuple[str, float]],
         top_k: int,
@@ -210,7 +203,7 @@ class Neo4jLegalRetriever:
             d.doc_type AS doc_type,
             d.effective_date AS effective_date
         """
-        rows = self._run_query(cypher, {"chunk_ids": chunk_ids})
+        rows = await self._run_query(cypher, {"chunk_ids": chunk_ids})
         row_map = {r["chunk_id"]: r for r in rows if r.get("chunk_id")}
 
         hydrated: List[RetrievedChunk] = []
@@ -235,17 +228,7 @@ class Neo4jLegalRetriever:
 
         return hydrated
 
-    def _vector_search(
-        self,
-        query: str,
-        candidate_ids: List[str],
-        top_k: int,
-    ) -> List[RetrievedChunk]:
-        """Backward-compatible wrapper for callers expecting hydrated chunks."""
-        ranked = self._vector_search_ranked(query, candidate_ids, top_k)
-        return self._hydrate_chunks(ranked, top_k)
-
-    def _expand_context(
+    async def _expand_context(
         self,
         results: List[RetrievedChunk],
         context_window: int = 1,
@@ -269,7 +252,7 @@ class Neo4jLegalRetriever:
                  ELSE null END AS context_after
         """
 
-        context_results = self._run_query(cypher_query, {"chunk_ids": chunk_ids})
+        context_results = await self._run_query(cypher_query, {"chunk_ids": chunk_ids})
         context_map = {r["chunk_id"]: r for r in context_results}
 
         for result in results:
@@ -280,15 +263,15 @@ class Neo4jLegalRetriever:
 
         return results
 
-    def get_document_info(self, doc_number: str) -> Optional[Dict]:
+    async def get_document_info(self, doc_number: str) -> Optional[Dict]:
         query = """
         MATCH (d:Document {doc_number: $doc_number})
         RETURN d {.*} AS document
         """
-        results = self._run_query(query, {"doc_number": doc_number})
+        results = await self._run_query(query, {"doc_number": doc_number})
         return results[0]["document"] if results else None
 
-    def find_related_documents(self, doc_number: str) -> List[Dict]:
+    async def find_related_documents(self, doc_number: str) -> List[Dict]:
         query = """
         MATCH (d:Document {doc_number: $doc_number})
         OPTIONAL MATCH (d2:Document {doc_number: d.amends})
@@ -298,10 +281,7 @@ class Neo4jLegalRetriever:
             collect(DISTINCT d2 {.*, relation: 'amends'}) +
             collect(DISTINCT d3 {.*, relation: 'amended_by'}) AS related
         """
-        results = self._run_query(query, {"doc_number": doc_number})
+        results = await self._run_query(query, {"doc_number": doc_number})
         if results and results[0]["related"]:
             return [r for r in results[0]["related"] if r]
         return []
-
-
-

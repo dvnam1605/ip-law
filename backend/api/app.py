@@ -86,19 +86,28 @@ async def lifespan(app: FastAPI):
         await cleanup_task
     except asyncio.CancelledError:
         pass
+    
+    # SmartRouter singleton close
+    try:
+        from backend.core.smart_router import get_smart_router
+        router = get_smart_router()
+        await router.close()
+    except Exception:
+        logger.exception("Failed to close smart router")
+
     if legal_pipeline is not None:
         try:
-            legal_pipeline.close()
+            await legal_pipeline.close()
         except Exception:
             logger.exception("Failed to close legal pipeline")
     if verdict_pipeline is not None:
         try:
-            verdict_pipeline.close()
+            await verdict_pipeline.close()
         except Exception:
             logger.exception("Failed to close verdict pipeline")
     if trademark_pipeline is not None:
         try:
-            trademark_pipeline.close()
+            await trademark_pipeline.close()
         except Exception:
             logger.exception("Failed to close trademark pipeline")
 

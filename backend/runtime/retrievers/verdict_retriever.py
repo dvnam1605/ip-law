@@ -1,9 +1,10 @@
 import os
+import asyncio
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from backend.core.config import config
 
-from neo4j import GraphDatabase
+from neo4j import AsyncGraphDatabase
 
 from backend.runtime.retrievers.qdrant import QdrantSearchClient, VERDICT_COLLECTION
 
@@ -69,14 +70,14 @@ class RetrievedVerdictChunk:
 
 
 class Neo4jVerdictRetriever:
-    """Dense retriever: Qdrant vector search + Neo4j context expansion."""
+    """Async dense retriever: Qdrant vector search + Neo4j context expansion."""
 
     def __init__(self, uri=None, user=None, password=None,
                  embedding_model_path=None, qdrant_url=None):
         self.uri = uri or os.getenv("NEO4J_URI") or config.NEO4J_URI
         self.user = user or os.getenv("NEO4J_USER") or config.NEO4J_USER
         self.password = password or os.getenv("NEO4J_PASSWORD") or config.NEO4J_PASSWORD
-        self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
+        self.driver = AsyncGraphDatabase.driver(self.uri, auth=(self.user, self.password))
 
         # Qdrant client for vector search
         self.qdrant = QdrantSearchClient(
@@ -89,15 +90,16 @@ class Neo4jVerdictRetriever:
         # Project-wide setting: dense-only retrieval.
         self.use_neo4j_prefilter = (os.getenv("VERDICT_PREFILTER_NEO4J", "0").strip().lower() in {"1", "true", "yes", "on"})
 
-    def close(self):
-        self.driver.close()
-        self.qdrant.close()
+    async def close(self):
+        await self.driver.close()
+        await self.qdrant.close()
 
-    def _run_query(self, query: str, params: Dict = None) -> List[Dict]:
-        with self.driver.session() as session:
-            return [r.data() for r in session.run(query, params or {})]
+    async def _run_query(self, query: str, params: Dict = None) -> List[Dict]:
+        async with self.driver.session() as session:
+            result = await session.run(query, params or {})
+            return await result.data()
 
-    def search(
+    async def search(
         self,
         query: str,
         ip_types: List[str] = None,
@@ -109,15 +111,15 @@ class Neo4jVerdictRetriever:
     ) -> List[RetrievedVerdictChunk]:
         candidates = None
         if self.use_neo4j_prefilter:
-            candidates = self._filter_candidates(ip_types, trial_level)
+            candidates = await self._filter_candidates(ip_types, trial_level)
             if not candidates:
                 return []
 
         fetch_k = top_k * 2 if boost_reasoning else top_k
 
-        ranked = self._vector_search_ranked(query, candidates, fetch_k)
+        ranked = await self._vector_search_ranked(query, candidates, fetch_k)
 
-        results = self._hydrate_chunks(ranked, top_k=fetch_k)
+        results = await self._hydrate_chunks(ranked, top_k=fetch_k)
 
         if boost_reasoning and results:
             for r in results:
@@ -125,14 +127,14 @@ class Neo4jVerdictRetriever:
             results.sort(key=lambda x: x.score, reverse=True)
             results = results[:top_k]
 
-        results = self._ensure_key_sections(results)
+        results = await self._ensure_key_sections(results)
 
         if expand_context and results:
-            self._expand_context(results, context_window)
+            await self._expand_context(results, context_window)
 
         return results
 
-    def _ensure_key_sections(self, results: List[RetrievedVerdictChunk]) -> List[RetrievedVerdictChunk]:
+    async def _ensure_key_sections(self, results: List[RetrievedVerdictChunk]) -> List[RetrievedVerdictChunk]:
         if not results:
             return results
 
@@ -169,12 +171,12 @@ class Neo4jVerdictRetriever:
         """
         extra = [
             RetrievedVerdictChunk.from_record(r)
-            for r in self._run_query(cypher)
+            for r in await self._run_query(cypher)
             if r["vchunk_id"] not in existing_ids
         ]
         return results + extra
 
-    def _filter_candidates(self, ip_types=None, trial_level=None) -> List[str]:
+    async def _filter_candidates(self, ip_types=None, trial_level=None) -> List[str]:
         conditions, params = [], {}
         if ip_types:
             conditions.append("ANY(ip IN v.ip_types WHERE ip IN $ip_types)")
@@ -189,9 +191,9 @@ class Neo4jVerdictRetriever:
         WHERE {where}
         RETURN vc.vchunk_id AS vchunk_id
         """
-        return [r["vchunk_id"] for r in self._run_query(query, params)]
+        return [r["vchunk_id"] for r in await self._run_query(query, params)]
 
-    def _vector_search_ranked(
+    async def _vector_search_ranked(
         self,
         query: str,
         candidate_ids: List[str],
@@ -201,10 +203,10 @@ class Neo4jVerdictRetriever:
         if not self.embedding_model:
             return []
 
-        query_embedding = self.qdrant.encode(query)
+        query_embedding = await self.qdrant.encode(query)
 
         try:
-            return self.qdrant.search(
+            return await self.qdrant.search(
                 collection=self.collection_name,
                 query_embedding=query_embedding,
                 id_field="vchunk_id",
@@ -215,7 +217,7 @@ class Neo4jVerdictRetriever:
             print(f"⚠️ Qdrant search failed: {e}")
             return []
 
-    def _hydrate_chunks(
+    async def _hydrate_chunks(
         self,
         ranked_vchunk_ids: List[Tuple[str, float]],
         top_k: int,
@@ -234,7 +236,7 @@ class Neo4jVerdictRetriever:
         {_RETURN_CLAUSE}
         """
 
-        rows = self._run_query(cypher, {"vchunk_ids": vchunk_ids})
+        rows = await self._run_query(cypher, {"vchunk_ids": vchunk_ids})
         row_map = {r["vchunk_id"]: r for r in rows if r.get("vchunk_id")}
         chunks: List[RetrievedVerdictChunk] = []
         for vid in vchunk_ids:
@@ -247,12 +249,7 @@ class Neo4jVerdictRetriever:
 
         return chunks
 
-    def _vector_search(self, query: str, candidate_ids: List[str], top_k: int) -> List[RetrievedVerdictChunk]:
-        """Backward-compatible wrapper for hydrated dense results."""
-        ranked = self._vector_search_ranked(query, candidate_ids, top_k)
-        return self._hydrate_chunks(ranked, top_k)
-
-    def _expand_context(self, results: List[RetrievedVerdictChunk], window: int = 1):
+    async def _expand_context(self, results: List[RetrievedVerdictChunk], window: int = 1):
         chunk_ids = [r.vchunk_id for r in results]
         cypher = f"""
         UNWIND $chunk_ids AS cid
@@ -270,13 +267,14 @@ class Neo4jVerdictRetriever:
                  THEN reduce(s = '', x IN next_contents | s + x + '\\n---\\n')
                  ELSE null END AS context_after
         """
-        ctx_map = {r["vchunk_id"]: r for r in self._run_query(cypher, {"chunk_ids": chunk_ids})}
+        ctx_data = await self._run_query(cypher, {"chunk_ids": chunk_ids})
+        ctx_map = {r["vchunk_id"]: r for r in ctx_data}
         for result in results:
             ctx = ctx_map.get(result.vchunk_id, {})
             result.context_before = ctx.get("context_before")
             result.context_after = ctx.get("context_after")
 
-    def get_full_verdict(self, case_number: str) -> List[RetrievedVerdictChunk]:
+    async def get_full_verdict(self, case_number: str) -> List[RetrievedVerdictChunk]:
         cypher = f"""
         MATCH (vc:VerdictChunk)-[:PART_OF_VERDICT]->(v:Verdict {{case_number: $case_number}})
         WITH vc, v, 1.0 AS score
@@ -285,5 +283,5 @@ class Neo4jVerdictRetriever:
         """
         return [
             RetrievedVerdictChunk.from_record(r)
-            for r in self._run_query(cypher, {"case_number": case_number})
+            for r in await self._run_query(cypher, {"case_number": case_number})
         ]

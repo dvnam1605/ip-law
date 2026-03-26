@@ -1,5 +1,6 @@
 import os
-from typing import List, Dict, Any, Optional
+import asyncio
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -118,9 +119,7 @@ class GeminiRAGPipeline:
         self.top_k = top_k
         self._initialized = True
         
-        print(f"✅ Initialized Gemini RAG Pipeline")
-        print(f"   Model: {model_name}")
-        print(f"   Top-K: {top_k}")
+        print(f"✅ Initialized Gemini RAG Pipeline (Async)")
     
     def _format_context(self, results: List[RetrievedChunk]) -> str:
         context_parts = []
@@ -160,7 +159,7 @@ class GeminiRAGPipeline:
             })
         return sources
     
-    def query(
+    async def query(
         self,
         query: str,
         top_k: int = None,
@@ -169,7 +168,7 @@ class GeminiRAGPipeline:
     ) -> RAGResponse:
         k = top_k or self.top_k
         
-        results = self.retriever.search(
+        results = await self.retriever.search(
             query=query,
             top_k=k,
             query_date=query_date,
@@ -189,7 +188,7 @@ class GeminiRAGPipeline:
         context = self._format_context(results)
         user_prompt = USER_PROMPT_TEMPLATE.format(query=query, context=context)
         
-        response = self.client.models.generate_content(
+        response = await self.client.aio.models.generate_content(
             model=self.model_name,
             contents=user_prompt,
             config=types.GenerateContentConfig(
@@ -212,13 +211,10 @@ class GeminiRAGPipeline:
         query_date: str = None,
         doc_types: List[str] = None,
         history: List[Dict] = None,
-    ):
-        import asyncio
-        
+    ) -> AsyncGenerator[str, None]:
         k = top_k or self.top_k
         
-        results = await asyncio.to_thread(
-            self.retriever.search,
+        results = await self.retriever.search(
             query=query,
             top_k=k,
             query_date=query_date,
@@ -246,8 +242,8 @@ class GeminiRAGPipeline:
             if chunk.text:
                 yield chunk.text
     
-    def close(self):
-        self.retriever.close()
+    async def close(self):
+        await self.retriever.close()
         GeminiRAGPipeline._instance = None
         self._initialized = False
 

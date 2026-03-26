@@ -4,6 +4,7 @@ Trademark RAG Pipeline
 Uses PostgreSQL with pg_trgm for fuzzy matching.
 """
 import os
+import asyncio
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,13 +103,8 @@ class TrademarkRetriever:
             self.engine, class_=AsyncSession, expire_on_commit=False
         )
 
-    def close(self):
-        import asyncio
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.engine.dispose())
-        except RuntimeError:
-            asyncio.run(self.engine.dispose())
+    async def close(self):
+        await self.engine.dispose()
 
     def _row_to_match(self, row: Trademark, score: float, match_type: str) -> TrademarkMatch:
         nice = [nc.class_number for nc in row.nice_classes] if row.nice_classes else []
@@ -228,21 +224,18 @@ class TrademarkRetriever:
         nice_classes: List[str] = None,
         limit: int = 20,
     ) -> List[TrademarkMatch]:
-        """Synchronous wrapper for search_async."""
-        import asyncio
+        """Synchronous wrapper for search_async. (Use with care in async contexts)"""
         try:
             loop = asyncio.get_running_loop()
+            # If we're already in a loop, we can't easily run another.
+            # Callers should ideally use search_async directly.
+            # This is a fallback that might block.
+            import nest_asyncio
+            nest_asyncio.apply()
         except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(
-                    asyncio.run, self.search_async(brand_name, nice_classes, limit)
-                ).result()
-        else:
-            return asyncio.run(self.search_async(brand_name, nice_classes, limit))
+            pass
+            
+        return asyncio.run(self.search_async(brand_name, nice_classes, limit))
 
 
 class TrademarkPipeline:
@@ -269,7 +262,7 @@ class TrademarkPipeline:
 
         self.retriever = TrademarkRetriever()
         self._initialized = True
-        print("✅ Trademark Pipeline ready")
+        print("✅ Initialized Trademark Pipeline (Async)")
 
     async def search_async(
         self,
@@ -345,8 +338,8 @@ class TrademarkPipeline:
             if chunk.text:
                 yield chunk.text
 
-    def close(self):
-        self.retriever.close()
+    async def close(self):
+        await self.retriever.close()
         TrademarkPipeline._instance = None
         self._initialized = False
 

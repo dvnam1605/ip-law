@@ -253,8 +253,8 @@ class VerdictRAGPipeline:
             if chunk.text:
                 yield chunk.text
 
-    def close(self):
-        self.retriever.close()
+    async def close(self):
+        await self.retriever.close()
         VerdictRAGPipeline._instance = None
         self._initialized = False
 
