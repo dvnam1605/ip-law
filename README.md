@@ -1,180 +1,162 @@
-# 🏛️ Legal RAG Chatbot - Tư vấn Pháp luật Việt Nam
+# 🏛️ SHTT Legal RAG: Vietnamese Intellectual Property Assistant
 
-Hệ thống RAG (Retrieval-Augmented Generation) cho tư vấn pháp luật sở hữu trí tuệ Việt Nam, sử dụng Neo4j Graph Database và Gemini AI.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg)](https://fastapi.tiangolo.com/)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 📁 Cấu trúc dự án
+**SHTT Legal RAG** (Sở Hữu Trí Tuệ) is a specialized AI-powered assistant designed for Vietnamese Intellectual Property Law. It leverages a **Hybrid RAG (Retrieval-Augmented Generation)** architecture, combining Graph Databases and Vector Search to provide accurate, context-aware legal advice and trademark search capabilities.
 
-```
-shtt/
-├── api/                    # FastAPI application
-│   └── main.py             # API endpoints
-├── core/                   # Core business logic
-│   └── rag_pipeline.py     # RAG pipeline với Gemini
-├── utils/                  # Utilities
-│   ├── neo4j_retriever.py  # Neo4j vector search
-│   ├── neo4j_ingest.py     # Ingest data vào Neo4j
-│   └── pdf_to_txt.py       # Convert PDF to text
-├── chunking/               # Document processing
-│   ├── legal_chunker.py    # Chunking logic v1
-│   └── legal_chunker_v2.py # Chunking logic v2
-├── vietnamese_embedding/   # Embedding model (gitignored)
-├── tai_lieu_phap_luat/     # Source legal documents
-├── docker-compose.yml      # Neo4j container
-├── requirements.txt        # Python dependencies
-└── .env                    # Environment variables
-```
+---
 
-## 🚀 Cài đặt
+## 🚀 Key Features
 
-### 1. Clone và cài đặt dependencies
+- **Hybrid RAG Architecture**: Integrates **Qdrant** (Vector Search) for semantic similarity and **Neo4j** (Graph Database) for structured legal relationships and context expansion.
+- **Vietnamese IP Law Focus**: Optimized for Vietnamese legal documents using specialized embedding models (PhoBERT-based).
+- **Verdict Analysis**: Advanced processing of court verdicts with automated metadata extraction.
+- **Trademark Search & Crawler**: Integrated tools for crawling and searching Vietnamese trademark databases.
+- **Streaming Response**: Real-time message streaming for a smooth user experience.
+- **Comprehensive Benchmarking**: Built-in evaluation module following the ViLeXa/Zalo AI challenge standards.
 
-```bash
-# Tạo môi trường conda
-conda create -n shtt python=3.12
-conda activate shtt
+---
 
-# Cài đặt dependencies
-pip install -r requirements.txt
-```
+## 🏗️ Architecture
 
-### 2. Cấu hình environment variables
+The system uses a unique hybrid approach to ensure high precision and recall in legal retrieval:
 
-Tạo file `.env`:
+1.  **Neo4j Pre-filter**: Filters document IDs based on structured metadata (status, effective date, etc.).
+2.  **Qdrant Vector Search**: Performs high-speed ANN (Approximate Nearest Neighbor) search on the filtered ID list.
+3.  **Context Expansion**: Re-traverses the Graph in Neo4j to retrieve neighboring chunks (`NEXT`/`PREV` relationships) to provide the LLM with full context.
+4.  **LLM Synthesis**: Uses Google Gemini AI to synthesize the final answer from retrieved context and chat history.
 
-```env
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=your_password
-GEMINI_API_KEY=your_gemini_api_key
-```
+---
 
-### 3. Khởi động Neo4j
+## 🛠️ Tech Stack
 
+### Backend
+- **Framework**: FastAPI (Python 3.12+)
+- **Vector DB**: Qdrant
+- **Graph DB**: Neo4j
+- **Relational DB**: PostgreSQL (Auth & Trademark data)
+- **AI/ML**: LangChain, Sentence-Transformers (PhoBERT), Google Gemini API
+- **Crawler**: Playwright
+
+### Frontend
+- **Framework**: React 19 + Vite
+- **Styling**: Tailwind CSS
+- **Icons**: Lucide React
+- **Data Viz**: Recharts
+
+---
+
+## 📦 Installation
+
+### Prerequisites
+- [Docker & Docker Compose](https://www.docker.com/)
+- [Conda](https://docs.conda.io/en/latest/) or Python 3.10+
+- [Node.js & npm](https://nodejs.org/)
+
+### 1. Infrastructure Setup
+Spin up the database cluster (PostgreSQL, Neo4j, Qdrant):
 ```bash
 docker-compose up -d
 ```
+- **Neo4j Browser**: [http://localhost:7474](http://localhost:7474)
+- **Qdrant Dashboard**: [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
 
-Neo4j Browser: http://localhost:7474
-
-### 4. Chuẩn bị Embedding Model
-
-Download Vietnamese embedding model vào thư mục `vietnamese_embedding/`.
-
-## 🔧 Chạy ứng dụng
-
-### Chạy API Server
-
+### 2. Backend Setup
 ```bash
-# Từ thư mục gốc
-cd /path/to/shtt
+# Create environment
+conda create -n shtt python=3.12 -y
 conda activate shtt
-python -m api.main
 
-# Hoặc với uvicorn trực tiếp
-uvicorn api.main:app --host 0.0.0.0 --port 1605 --reload
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-API Documentation: http://localhost:1605/docs
-
-### API Endpoints
-
-| Method | Endpoint | Mô tả |
-|--------|----------|-------|
-| GET | `/` | Health check |
-| GET | `/health` | Health check |
-| POST | `/api/query` | Truy vấn pháp luật |
-| GET | `/api/query?q=...` | Truy vấn (GET method) |
-
-### Ví dụ Request
-
+### 3. Frontend Setup
 ```bash
-# POST request
-curl -X POST "http://localhost:1605/api/query" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "Điều kiện đăng ký nhãn hiệu ở Việt Nam?",
-    "top_k": 5
-  }'
-
-# GET request
-curl "http://localhost:1605/api/query?q=Điều%20kiện%20bảo%20hộ%20quyền%20tác%20giả&top_k=5"
+cd frontend
+npm install
 ```
 
-### Response Format
+### 4. Configuration
+Create a `.env` file in the root directory:
+```env
+# Database
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_password
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=legal_rag
 
-```json
-{
-  "success": true,
-  "query": "Điều kiện đăng ký nhãn hiệu ở Việt Nam?",
-  "answer": "Theo Điều 87 - Luật Sở Hữu Trí Tuệ (Số văn bản: 50/2005/QH11)...",
-  "sources": [
-    {
-      "doc_name": "Luật Sở Hữu Trí Tuệ",
-      "doc_type": "Luật",
-      "doc_number": "50/2005/QH11",
-      "dieu": "Điều 87",
-      "dieu_title": "Quyền đăng ký nhãn hiệu",
-      "score": 0.8293
-    }
-  ],
-  "retrieved_chunks": 5,
-  "processing_time_ms": 1234.56
-}
+# AI Keys
+GEMINI_API_KEY=your_gemini_key
+
+# Qdrant
+QDRANT_URL=http://localhost:6333
 ```
 
-## 📊 Data Pipeline
+---
 
-### 1. Ingest Documents
+## 🏃 Quick Start
 
+### 1. Data Ingestion
+Populate your databases with legal documents and verdicts:
 ```bash
-# Convert PDF to text
-python utils/pdf_to_txt.py
+# Ingest Legal Documents
+python scripts/run_legal_pipeline.py
 
-# Chunking documents
-python chunking/legal_chunker_v2.py
-
-# Ingest vào Neo4j
-python utils/neo4j_ingest.py
+# Ingest Court Verdicts
+python scripts/run_verdict_pipeline.py
 ```
 
-### 2. Graph Schema
-
+### 2. Run Servers
+**Backend:**
+```bash
+cd backend/api
+python app.py
 ```
-(:Document {doc_id, doc_name, doc_type, doc_number, effective_date, status})
-    ↑
-[:PART_OF]
-    │
-(:Chunk {chunk_id, content, dieu, dieu_title, chuong, embedding})
-    │
-[:NEXT]
-    ↓
-(:Chunk ...)
+*API Docs: [http://localhost:1605/docs](http://localhost:1605/docs)*
+
+**Frontend:**
+```bash
+cd frontend
+npm run dev
+```
+*UI: [http://localhost:5173](http://localhost:5173)*
+
+---
+
+## 📡 API Documentation
+
+### Key Endpoints
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/query/stream` | Streamed RAG query for legal questions. |
+| `POST` | `/api/smart/query/stream` | Intelligent router between Legal, Verdict, and Trademark. |
+| `GET`  | `/api/trademark/search` | Search for registered trademarks. |
+| `POST` | `/api/auth/login` | User authentication and JWT issuance. |
+
+---
+
+## 📊 Evaluation (ViLeXa-style)
+
+The project includes a robust benchmarking tool to measure retrieval performance:
+```bash
+python -m benchmarks.run_eval \
+       --mode legal \
+       --data-dir data/internal_legal_benchmark \
+       --k-values 1,5,10
 ```
 
-## 🔍 RAG Pipeline Flow
+---
 
-```
-1. User Query
-       ↓
-2. Cypher Filter (status=active, effective_date)
-       ↓
-3. Vector Search (Neo4j + Embedding)
-       ↓
-4. Context Expansion (NEXT relationship)
-       ↓
-5. Gemini Generation
-       ↓
-6. Response với Source Citations
-```
+## 📄 License
 
-## ⚙️ Configuration
+Distributed under the MIT License. See `LICENSE` for more information.
 
-| Variable | Default | Mô tả |
-|----------|---------|-------|
-| `GEMINI_API_KEY` | - | API key cho Gemini |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Model Gemini |
-| `TOP_K_RETRIEVAL` | `5` | Số lượng chunks retrieve |
-| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection |
+---
 
-## 📝 License
 
-MIT License

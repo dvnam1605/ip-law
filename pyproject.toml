@@ -1,0 +1,12 @@
+[project]
+name = "shtt-legal-rag"
+version = "2.0.0"
+description = "Legal RAG Chatbot - Tư vấn pháp luật Sở hữu trí tuệ Việt Nam"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"

@@ -4,6 +4,7 @@ qdrant-client
 sentence-transformers
 # torch>=2.0.0
 google-generativeai>=0.8.0
+google-genai>=1.0.0
 python-dotenv
 neo4j
 
@@ -11,3 +12,13 @@ neo4j
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Database & Auth
+sqlalchemy[asyncio]>=2.0.0
+asyncpg>=0.29.0
+passlib[bcrypt]>=1.7.4
+python-jose[cryptography]>=3.3.0
+
+# Trademark Crawler
+playwright>=1.40.0
